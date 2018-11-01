@@ -1,0 +1,3 @@
+不带操作系统
+fafts 操作 sd 卡，fatfs未开启长文件名，ftp 搭载在 sd 的文件系统上，使用 uip 协议。 
+支持 telnet 在线升级，直接把文件拖拽到 secureCRT  ，选择二进制发送 ，重启即可
