@@ -4,11 +4,11 @@
 #define TELNET_PORT 23U
 
 
-void uIP_TelnetAppInit(void);
+void telnet_server_init(void);
 
-void uIP_TelnetAppCall(void);
+void telnet_port_call(void);
 
-void uip_TelnetServerPro(void);
+void telnet_server_pro(void);
 
 
 #endif

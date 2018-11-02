@@ -14,20 +14,20 @@
 
 
 
-void uIP_TcpAppCall(void)
+void uip_tcp_app_call(void)
 {
 	switch(HTONS(uip_conn->lport))
 	{
 		case (TELNET_PORT):
-			uIP_TelnetAppCall();
+			telnet_port_call();
 			break;
 		
 		case (FTP_CTRL_PORT):
-			uIP_FtpCtrlPortCall();
+			ftp_ctrl_port_call();
 			break;
 		
 		case (FTP_DATA_PORT):
-			uIP_FtpDataPortCall();
+			ftp_data_port_call();
 			break;
 		
 		default:;
@@ -36,19 +36,19 @@ void uIP_TcpAppCall(void)
 
 
 
-void uIP_AppPoll(void)
+void uip_app_poll(void)
 {
-	uIP_FtpServerPro();
-	uip_TelnetServerPro();
+	ftp_server_process();
+	telnet_server_pro();
 }
 
 
 
 
-void uIP_AppInit(void)
+void uip_app_init(void)
 {
-	uIP_FtpServerInit();
-	uIP_TelnetAppInit();
+	ftp_server_init();
+	telnet_server_init();
 }
 
 

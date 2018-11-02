@@ -84,10 +84,10 @@ void vShell_EraseBuf(void * arg)
 
 
 
-void uIP_TelnetAppInit(void)
+void telnet_server_init(void)
 {
-	vShell_InitBuf(&stTelnetShell ,vTelnetOut);	
-	vShell_RegisterCommand("telnet-erase",vShell_EraseBuf);	
+	SHELL_MALLOC(&stTelnetShell ,vTelnetOut);	
+	shell_register_command("telnet-erase",vShell_EraseBuf);	
 	uip_listen(HTONS(23));
 }
 
@@ -132,7 +132,7 @@ Normal:
 	}
 
 	if ( len )
-		vShell_Input(&stTelnetShell,(char*)pcInput,len);
+		shell_input(&stTelnetShell,(char*)pcInput,len);
 
 	return ;
 	
@@ -234,7 +234,7 @@ Normal:
 	}
 
 	if ( len )
-		vShell_Input(&stTelnetShell,(char*)pcInput,len);
+		shell_input(&stTelnetShell,(char*)pcInput,len);
 
 	return ;
 	
@@ -316,7 +316,7 @@ TransmitBin:
 extern void vUsartHal_Output(char * buf, uint16_t len);
 
 
-void uIP_TelnetAppCall(void)
+void telnet_port_call(void)
 {
 	if(uip_connected()) 
 	{
@@ -366,7 +366,7 @@ void uIP_TelnetAppCall(void)
 
 
 
-void uip_TelnetServerPro(void)
+void telnet_server_pro(void)
 {  
 	if (buftail)
 	{

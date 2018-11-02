@@ -74,24 +74,23 @@ union uncmd
 };
 
 
-//char * shell_input_sign = "shell >";
-struct avl_root shell_avltree_root = {.avl_node = NULL};//ÃüÁîÆ¥ÅäµÄÆ½ºâ¶ş²æÊ÷Ê÷¸ù 
+struct avl_root shell_root = {.avl_node = NULL};//ÃüÁîÆ¥ÅäµÄÆ½ºâ¶ş²æÊ÷Ê÷¸ù 
 static struct shell_record
 {
 	char  buf[COMMANDLINE_MAX_RECORD][COMMANDLINE_MAX_LEN];
 	uint8_t read;
 	uint8_t write;
 }
-stShellHistory = {0};
+shell_history = {0};
 
 char shell_input_sign[128] = DEFAULT_INPUTSIGN;
 //------------------------------Ïà¹Øº¯ÊıÉùÃ÷------------------------------
-struct shell_cmd * pShell_ParseCmdline(char  * cmdline);
-static char * pcShell_Record(struct shell_buf * pStShellBuf);
-void vShell_GetChar     (struct shell_buf * pStShellbuf , char ch);
-void vShell_GetBackspace(struct shell_buf * pStShellBuf) ;
-void vShell_GetTab      (struct shell_buf * pStShellBuf) ;
-void vShell_ShowRecord  (struct shell_buf * pStShellBuf ,uint8_t LastOrNext);
+
+static char * shell_record(struct shell_buf * shellbuf);
+void shell_getchar           (struct shell_buf * shellbuf , char ch);
+void shell_backspace(struct shell_buf * shellbuf) ;
+void shell_tab               (struct shell_buf * shellbuf) ;
+void shell_show_history  (struct shell_buf * shellbuf ,uint8_t LastOrNext);
 
 
 //------------------------------»ªÀöµÄ·Ö¸îÏß------------------------------
@@ -101,21 +100,21 @@ void vShell_ShowRecord  (struct shell_buf * pStShellBuf ,uint8_t LastOrNext);
 	* @param    CmdID        ÃüÁîºÅ
 	* @return   ³É¹¦ id ºÅ¶ÔÓ¦µÄ¿ØÖÆ¿é
 */
-static struct shell_cmd *pShell_SearchCmd(int CmdID)
+static struct shell_cmd *shell_search_cmd(int CmdID)
 {
-    struct avl_node *node = shell_avltree_root.avl_node;
+    struct avl_node *node = shell_root.avl_node;
 
     while (node) 
 	{
-		struct shell_cmd *pCmd = container_of(node, struct shell_cmd, cmd_node);
+		struct shell_cmd * command = container_of(node, struct shell_cmd, cmd_node);
 
-		if (CmdID < pCmd->ID)
+		if (CmdID < command->ID)
 		    node = node->avl_left;
 		else 
-		if (CmdID > pCmd->ID)
+		if (CmdID > command->ID)
 		    node = node->avl_right;
   		else 
-			return pCmd;
+			return command;
     }
     
     return NULL;
@@ -124,14 +123,14 @@ static struct shell_cmd *pShell_SearchCmd(int CmdID)
 
 
 /**
-	* @brief    iShell_InsertCmd 
+	* @brief    shell_insert_cmd 
 	*           ÃüÁîÊ÷²åÈë
 	* @param    pCmd        ÃüÁî¿ØÖÆ¿é
 	* @return   ³É¹¦·µ»Ø 0
 */
-static int iShell_InsertCmd(struct shell_cmd * pCmd)
+static int shell_insert_cmd(struct shell_cmd * pCmd)
 {
-	struct avl_node **tmp = &shell_avltree_root.avl_node;
+	struct avl_node **tmp = &shell_root.avl_node;
  	struct avl_node *parent = NULL;
 	
 	/* Figure out where to put new node */
@@ -152,7 +151,7 @@ static int iShell_InsertCmd(struct shell_cmd * pCmd)
 	/* Add new node and rebalance tree. */
 	//rb_link_node(&pCmd->cmd_node, parent, tmp);
 	//rb_insert_color(&pCmd->cmd_node, root);
-	avl_insert(&shell_avltree_root,&pCmd->cmd_node,parent,tmp);
+	avl_insert(&shell_root,&pCmd->cmd_node,parent,tmp);
 	
 	return 0;
 }
@@ -160,17 +159,17 @@ static int iShell_InsertCmd(struct shell_cmd * pCmd)
 
 /**
 	* @author   ¹ÅÃ´Äş
-	* @brief    vShell_GetChar 
+	* @brief    shell_getchar 
 	*           ÃüÁîĞĞ¼ÇÂ¼ÊäÈëÒ»¸ö×Ö·û
 	* @param    
 	* @return   
 */
-void vShell_GetChar(struct shell_buf * pStShellbuf , char ch)
+void shell_getchar(struct shell_buf * shellbuf , char ch)
 {
-	char * ptr = pStShellbuf->bufmem + pStShellbuf->index;
-	pStShellbuf->bufmem[pStShellbuf->index] = ch;
-	pStShellbuf->index = (pStShellbuf->index + 1) % COMMANDLINE_MAX_LEN;
-	pStShellbuf->bufmem[pStShellbuf->index] = 0;
+	char * ptr = shellbuf->bufmem + shellbuf->index;
+	shellbuf->bufmem[shellbuf->index] = ch;
+	shellbuf->index = (shellbuf->index + 1) % COMMANDLINE_MAX_LEN;
+	shellbuf->bufmem[shellbuf->index] = 0;
 	printl(ptr,1); //·´À¡Êä³ö´òÓ¡
 }
 
@@ -179,39 +178,38 @@ void vShell_GetChar(struct shell_buf * pStShellbuf , char ch)
 
 /**
 	* @author   ¹ÅÃ´Äş
-	* @brief    vShell_GetBackspace 
+	* @brief    shell_backspace 
 	*           ¿ØÖÆÌ¨ÊäÈë »ØÍË ¼ü´¦Àí
 	* @param    void
 	* @return   void
 */
-void vShell_GetBackspace(struct shell_buf * pStShellBuf)
+void shell_backspace(struct shell_buf * shellbuf)
 {
-	if (pStShellBuf->index)//Èç¹ûµ±Ç°´òÓ¡ĞĞÓĞÊäÈëÄÚÈİ£¬»ØÍËÒ»¸ö¼üÎ»
+	if (shellbuf->index)//Èç¹ûµ±Ç°´òÓ¡ĞĞÓĞÊäÈëÄÚÈİ£¬»ØÍËÒ»¸ö¼üÎ»
 	{
 		printk("\010 \010"); //KEYCODE_BACKSPACE 
-		--pStShellBuf->index;
-		pStShellBuf->bufmem[pStShellBuf->index] = 0;
+		shellbuf->bufmem[--shellbuf->index] = 0;
 	}
 }
 
 
 
 /** 
-	* @brief vConsole_Input_TAB ¿ØÖÆÌ¨ÊäÈë table ¼ü´¦Àí
-	* @param void
+	* @brief shell_tab ÊäÈë table ¼ü´¦Àí
+	* @param shellbuf
 	*
 	* @return NULL
 */
-void vShell_GetTab(struct shell_buf * pStShellBuf)
+void shell_tab(struct shell_buf * shellbuf)
 {
 	uint32_t iFirstChar;
 	uint8_t cCnt ;
 	
-	uint8_t ucInputLen = pStShellBuf->index;
-	char   * pInputStr = pStShellBuf->bufmem;
+	uint8_t ucInputLen = shellbuf->index;
+	char   * pInputStr = shellbuf->bufmem;
 	
-	struct shell_cmd * MatchCmd[10];//Æ¥Åäµ½µÄÃüÁîĞĞ
-	uint8_t            MatchNum = 0;//Æ¥Åäµ½µÄÃüÁîºÅ¸öÊı
+	struct shell_cmd * match[10];//Æ¥Åäµ½µÄÃüÁîĞĞ
+	uint8_t            match_cnt = 0;//Æ¥Åäµ½µÄÃüÁîºÅ¸öÊı
 	
 	while (*pInputStr == ' ')  //ÓĞÊ±ºò»áÊäÈë¿Õ¸ñ£¬ĞèÒªÌø¹ı
 	{
@@ -224,7 +222,7 @@ void vShell_GetTab(struct shell_buf * pStShellBuf)
 	
 	iFirstChar = (uint32_t)(*pInputStr)<<26;//Æ¥ÅäÊ××ÖÄ¸
 
-    for (struct avl_node* node = avl_first(&shell_avltree_root); node ; node = avl_next(node))//±éÀú¶ş²æÊ÷
+    for (struct avl_node* node = avl_first(&shell_root); node ; node = avl_next(node))//±éÀú¶ş²æÊ÷
 	{
 		struct shell_cmd * pshell_cmd = avl_entry(node,struct shell_cmd, cmd_node);
 		uint32_t  CmdFirstChar = (pshell_cmd->ID & (0xfc000000)); 
@@ -233,8 +231,8 @@ void vShell_GetTab(struct shell_buf * pStShellBuf)
 		{
 			if (memcmp(pshell_cmd->pName, pInputStr, ucInputLen) == 0) //¶Ô±ÈÃüÁî×Ö·û´®£¬Èç¹ûÆ¥Åäµ½ÏàÍ¬µÄ
 			{
-				MatchCmd[MatchNum] = pshell_cmd;     //°ÑÆ¥Åäµ½µÄÃüÁîºÅË÷Òı¼ÇÏÂÀ´
-				if (++MatchNum > 10) 
+				match[match_cnt] = pshell_cmd;     //°ÑÆ¥Åäµ½µÄÃüÁîºÅË÷Òı¼ÇÏÂÀ´
+				if (++match_cnt > 10) 
 					return ;    //³¬¹ıÊ®ÌõÏàÍ¬·µ»Ø
 			}
 		}
@@ -245,29 +243,29 @@ void vShell_GetTab(struct shell_buf * pStShellBuf)
 		}
 	}
 
-	if (!MatchNum) 
+	if (!match_cnt) 
 		return ; //Èç¹ûÃ»ÓĞÃüÁî°üº¬ÊäÈëµÄ×Ö·û´®£¬·µ»Ø
 	
-	if (1 == MatchNum)  //Èç¹ûÖ»ÕÒµ½ÁËÒ»ÌõÃüÁî°üº¬µ±Ç°ÊäÈëµÄ×Ö·û´®£¬Ö±½Ó²¹È«ÃüÁî£¬²¢´òÓ¡
+	if (1 == match_cnt)  //Èç¹ûÖ»ÕÒµ½ÁËÒ»ÌõÃüÁî°üº¬µ±Ç°ÊäÈëµÄ×Ö·û´®£¬Ö±½Ó²¹È«ÃüÁî£¬²¢´òÓ¡
 	{
-		for(char * ptr = MatchCmd[0]->pName + ucInputLen ;*ptr ;++ptr) //´òÓ¡Ê£ÓàµÄ×Ö·û		
-			vShell_GetChar(pStShellBuf,*ptr);
+		for(char * ptr = match[0]->pName + ucInputLen ;*ptr ;++ptr) //´òÓ¡Ê£ÓàµÄ×Ö·û		
+			shell_getchar(shellbuf,*ptr);
 	}
 	else   //Èç¹û²»Ö¹Ò»ÌõÃüÁî°üº¬µ±Ç°ÊäÈëµÄ×Ö·û´®£¬´òÓ¡º¬ÓĞÏàÍ¬×Ö·ûµÄÃüÁîÁĞ±í£¬²¢²¹È«×Ö·û´®Êä³öÖ±µ½ÃüÁîÇø·Öµã
 	{
-		for(cCnt = 0;cCnt < MatchNum; ++cCnt) 
-			printk("\r\n\t%s",MatchCmd[cCnt]->pName); //°ÑËùÓĞº¬ÓĞÊäÈë×Ö·û´®µÄÃüÁîÁĞ±í´òÓ¡³öÀ´
+		for(cCnt = 0;cCnt < match_cnt; ++cCnt) 
+			printk("\r\n\t%s",match[cCnt]->pName); //°ÑËùÓĞº¬ÓĞÊäÈë×Ö·û´®µÄÃüÁîÁĞ±í´òÓ¡³öÀ´
 		
-		printk("\r\n%s%s",shell_input_sign,pStShellBuf->bufmem); //ÖØĞÂ´òÓ¡ÊäÈë±êÖ¾ºÍÒÑÊäÈëµÄ×Ö·û´®
+		printk("\r\n%s%s",shell_input_sign,shellbuf->bufmem); //ÖØĞÂ´òÓ¡ÊäÈë±êÖ¾ºÍÒÑÊäÈëµÄ×Ö·û´®
 		
 		while(1)  //²¹È«ÃüÁî£¬°ÑÃ¿ÌõÃüÁî¶¼°üº¬µÄ×Ö·û²¹È«²¢´òÓ¡
 		{
-			for (cCnt = 1;cCnt < MatchNum; ++cCnt)
+			for (cCnt = 1;cCnt < match_cnt; ++cCnt)
 			{
-				if (MatchCmd[0]->pName[ucInputLen] != MatchCmd[cCnt]->pName[ucInputLen]) 
+				if (match[0]->pName[ucInputLen] != match[cCnt]->pName[ucInputLen]) 
 					return  ; //×Ö·û²»Ò»Ñù£¬·µ»Ø
 			}
-			vShell_GetChar(pStShellBuf,MatchCmd[0]->pName[ucInputLen++]);  //°ÑÏàÍ¬µÄ×Ö·û²¹È«µ½ÊäÈë»º³åÖĞ
+			shell_getchar(shellbuf,match[0]->pName[ucInputLen++]);  //°ÑÏàÍ¬µÄ×Ö·û²¹È«µ½ÊäÈë»º³åÖĞ
 		}
 	}
 }
@@ -279,12 +277,12 @@ void vShell_GetTab(struct shell_buf * pStShellBuf)
 
 /**
 	* @author   ¹ÅÃ´Äş
-	* @brief    vShell_Input 
+	* @brief    shell_input 
 	*           ÃüÁîĞĞ½âÎöÊäÈë
 	* @param    
 	* @return   
 */
-void vShell_Parse(struct shell_buf * pStShellBuf)
+void shell_parse(struct shell_buf * shellbuf)
 {
 	uint8_t ucLen = 0;
 	uint8_t fcrc8 = 0;
@@ -292,8 +290,8 @@ void vShell_Parse(struct shell_buf * pStShellBuf)
 	uint8_t sSum = 0;
 	union uncmd unCmd ;
 	
-	char * cmdline = pStShellBuf->bufmem;
-	int cmdline_len = pStShellBuf->index ;
+	char * cmdline = shellbuf->bufmem;
+	int cmdline_len = shellbuf->index ;
 	
 	struct shell_cmd * cmdmatch;
 	
@@ -322,21 +320,21 @@ void vShell_Parse(struct shell_buf * pStShellBuf)
 	unCmd.part.CRC1 = fcrc8;
 	unCmd.part.CRC2 = bcrc8;
 	
-	cmdmatch = pShell_SearchCmd(unCmd.ID);//Æ¥ÅäÃüÁîºÅ
+	cmdmatch = shell_search_cmd(unCmd.ID);//Æ¥ÅäÃüÁîºÅ
 
 	if (cmdmatch != NULL)
 	{
-		char * record = pcShell_Record(pStShellBuf);  //¼ÇÂ¼µ±Ç°ÊäÈëµÄÃüÁîºÍÃüÁî²ÎÊı
-		char * arg = record + iShell_CmdLen(cmdmatch);
+		char * record = shell_record(shellbuf);  //¼ÇÂ¼µ±Ç°ÊäÈëµÄÃüÁîºÍÃüÁî²ÎÊı
+		char * arg = record + SHELL_CMD_LEN(cmdmatch);
 		cmdmatch->Func(arg);
 	}
 	else
 	{
-		printk("\r\n\r\n\tno reply:%s\r\n",pStShellBuf->bufmem);
+		printk("\r\n\r\n\tno reply:%s\r\n",shellbuf->bufmem);
 	}
 	
 parseend:	
-	pStShellBuf->index = 0;
+	shellbuf->index = 0;
 	return ;
 }
 
@@ -345,15 +343,15 @@ parseend:
 
 /**
 	* @author   ¹ÅÃ´Äş
-	* @brief    vShell_Input 
+	* @brief    shell_input 
 	*           Ó²¼şÉÏ½ÓÊÕµ½µÄÊı¾İµ½¿ØÖÆÌ¨¼äµÄ´«Êä
 	* @param    pcHalRxBuf     Ó²¼ş²ãËù½ÓÊÕµ½µÄÊı¾İ»º³åÇøµØÖ·
 	* @param    ucLen          Ó²¼ş²ãËù½ÓÊÕµ½µÄÊı¾İ³¤¶È
 	* @return   void
 */
-void vShell_Input(struct shell_buf * pStShellbuf,char * ptr,uint8_t len)
+void shell_input(struct shell_buf * shellbuf,char * ptr,uint8_t len)
 {
-	current_puts = pStShellbuf->puts; //shell Èë¿Ú¶ÔÓ¦³ö¿Ú
+	current_puts = shellbuf->puts; //shell Èë¿Ú¶ÔÓ¦³ö¿Ú
 	
 	for ( ; len && *ptr; --len,++ptr)
 	{
@@ -364,18 +362,18 @@ void vShell_Input(struct shell_buf * pStShellbuf,char * ptr,uint8_t len)
 				
 			case KEYCODE_ENTER:
 				printk("\r\n");
-				if (pStShellbuf->index) 
-					vShell_Parse(pStShellbuf);
+				if (shellbuf->index) 
+					shell_parse(shellbuf);
 				else
 					printk("%s",shell_input_sign);
 				break;
 			
 			case KEYCODE_TAB: 
-				vShell_GetTab(pStShellbuf); 
+				shell_tab(shellbuf); 
 				break;
 			
 			case KEYCODE_BACKSPACE : 
-				vShell_GetBackspace(pStShellbuf); 
+				shell_backspace(shellbuf); 
 				break;
 			
 			case KEYCODE_ESC :
@@ -383,8 +381,8 @@ void vShell_Input(struct shell_buf * pStShellbuf,char * ptr,uint8_t len)
 				{
 					switch(ptr[2])
 					{
-						case 0x41:vShell_ShowRecord(pStShellbuf,0);break;//ÉÏ¼ıÍ·
-						case 0x42:vShell_ShowRecord(pStShellbuf,1);break;//ÏÂ¼ıÍ·
+						case 0x41:shell_show_history(shellbuf,0);break;//ÉÏ¼ıÍ·
+						case 0x42:shell_show_history(shellbuf,1);break;//ÏÂ¼ıÍ·
 						default:;
 					}
 					
@@ -396,11 +394,11 @@ void vShell_Input(struct shell_buf * pStShellbuf,char * ptr,uint8_t len)
 				
 			case KEYCODE_CTRL_C:
 				printk("^C");
-				pStShellbuf->index = 0;
+				shellbuf->index = 0;
 				break;
 			
 			default: // ÆÕÍ¨×Ö·û
-				vShell_GetChar(pStShellbuf,*ptr); //ÊäÈëµ½ÄÚ´æ»º³åÖĞ;
+				shell_getchar(shellbuf,*ptr); //ÊäÈëµ½ÄÚ´æ»º³åÖĞ;
 		}
 	}
 	
@@ -411,80 +409,80 @@ void vShell_Input(struct shell_buf * pStShellbuf,char * ptr,uint8_t len)
 
 /**
 	* @author   ¹ÅÃ´Äş
-	* @brief    pcShell_Record 
+	* @brief    record 
 	*           ¼ÇÂ¼´Ë´ÎÔËĞĞµÄÃüÁî¼°²ÎÊı
 	* @param    
 	* @return   ·µ»Ø¼ÇÂ¼µØÖ·
 */
-static char * pcShell_Record(struct shell_buf * pStShellBuf)
+static char * shell_record(struct shell_buf * shellbuf)
 {
-	char * cmdline = pStShellBuf->bufmem;
-	int cmdline_len = pStShellBuf->index ;
+	char * cmdline = shellbuf->bufmem;
+	int cmdline_len = shellbuf->index ;
 	
-	char *  pcHistory = &stShellHistory.buf[stShellHistory.write][0];
+	char *  history = &shell_history.buf[shell_history.write][0];
 	
-	stShellHistory.write = (stShellHistory.write + 1) % COMMANDLINE_MAX_RECORD;
-	stShellHistory.read = stShellHistory.write;
+	shell_history.write = (shell_history.write + 1) % COMMANDLINE_MAX_RECORD;
+	shell_history.read = shell_history.write;
 	
-	memcpy(pcHistory,cmdline,cmdline_len);
-	pcHistory[cmdline_len] = 0;
+	memcpy(history,cmdline,cmdline_len);
+	history[cmdline_len] = 0;
 	
-	return pcHistory;
+	return history;
 }
 
 
 
 /*******************************************************************
 	* @author   ¹ÅÃ´Äş
-	* @brief    vShell_ShowRecord 
+	* @brief    shell_show_history 
 	*           °´ÉÏÏÂ¼ıÍ·¼üÏÔÊ¾ÒÔÍùÊäÈë¹ıµÄÃüÁî£¬´Ë´¦Ö»¼ÇÂ¼×î½ü¼¸´ÎµÄÃüÁî
 	* @param    void
 	* @return   void
 */
-void vShell_ShowRecord(struct shell_buf * pStShellBuf,uint8_t LastOrNext)
+void shell_show_history(struct shell_buf * shellbuf,uint8_t LastOrNext)
 {
 	uint8_t ucLen;
-	char *pcHistory;
+	char *history;
 	
 	printk("\33[2K\r%s",shell_input_sign);//printk("\33[2K\r");±íÊ¾Çå³ıµ±Ç°ĞĞ
 
 	if (!LastOrNext) //ÉÏ¼ıÍ·£¬ÉÏÒ»ÌõÃüÁî
 	{
-		stShellHistory.read = (!stShellHistory.read) ? (COMMANDLINE_MAX_RECORD - 1) : (stShellHistory.read - 1);
+		shell_history.read = (!shell_history.read) ? (COMMANDLINE_MAX_RECORD - 1) : (shell_history.read - 1);
 	}
 	else
 	{	
-		if (stShellHistory.read == stShellHistory.write)
+		if (shell_history.read == shell_history.write)
 		{
-			pStShellBuf->bufmem[0] = 0;
-			pStShellBuf->index = 0 ;
+			shellbuf->bufmem[0] = 0;
+			shellbuf->index = 0 ;
 			return ;
 		}
 		
-		stShellHistory.read = (stShellHistory.read + 1) % COMMANDLINE_MAX_RECORD;
+		shell_history.read = (shell_history.read + 1) % COMMANDLINE_MAX_RECORD;
 	}
 	
-	pcHistory = &stShellHistory.buf[stShellHistory.read][0];
-	ucLen = strlen(pcHistory);
+	history = &shell_history.buf[shell_history.read][0];
+	ucLen = strlen(history);
 	if (ucLen)
 	{
-		memcpy(pStShellBuf->bufmem,pcHistory,ucLen);
-		pStShellBuf->bufmem[ucLen] = 0;
-		pStShellBuf->index = ucLen ;
-		printl(pStShellBuf->bufmem,ucLen);
+		memcpy(shellbuf->bufmem,history,ucLen);
+		shellbuf->bufmem[ucLen] = 0;
+		shellbuf->index = ucLen ;
+		printl(shellbuf->bufmem,ucLen);
 	}
 	else
 	{
-		pStShellBuf->bufmem[0] = 0;
-		pStShellBuf->index = 0 ;
+		shellbuf->bufmem[0] = 0;
+		shellbuf->index = 0 ;
 	}
 }
 
 
 /********************************************************************
-	* @brief    iShell_ParseParam 
+	* @brief    shell_cmdparam 
 	*           ×ª»»»ñÈ¡ÃüÁîºÅºóÃæµÄÊäÈë²ÎÊı£¬×Ö·û´®×ªÎªÕûÊı
-	* @param    pcStr       ÃüÁî×Ö·û´®ºóÃæËù¸ú²ÎÊı»º³åÇøÖ¸Õë
+	* @param    str       ÃüÁî×Ö·û´®ºóÃæËù¸ú²ÎÊı»º³åÇøÖ¸Õë
 	* @param    piValueBuf  Êı¾İ×ª»»ºó»º´æµØÖ·
 	* @param    iParamNum   Êı¾İ¸öÊı
 	* @return   void
@@ -493,48 +491,48 @@ void vShell_ShowRecord(struct shell_buf * pStShellBuf,uint8_t LastOrNext)
 		* @retval   PARAMETER_HELP          ÃüÁîºóÃæ¸úÁË ? ºÅ
 		* @retval   PARAMETER_ERROR         ÃüÁî²ÎÊı´íÎó
 */
-int iShell_ParseParam(char * pcStr,int * argc,int argv[])
+int shell_cmdparam(char * str,int * argc,int argv[])
 {
 	uint8_t ucCnt;
 	uint8_t ucValue;
 
-	while (' ' == *pcStr) ++pcStr;//Ìø¹ı¿Õ¸ñ
+	while (' ' == *str) ++str;//Ìø¹ı¿Õ¸ñ
 	
-	if (*pcStr == 0) //Èç¹ûÃüÁîºóÃæÃ»ÓĞ¸ú²ÎÊı×Ö·ûÊäÈë£¬·µ»Ø¿Õ
+	if (*str == 0) //Èç¹ûÃüÁîºóÃæÃ»ÓĞ¸ú²ÎÊı×Ö·ûÊäÈë£¬·µ»Ø¿Õ
 	{
 		*argc = 0;
 		return PARAMETER_EMPTY;
 	}
 
-	if (*pcStr == '?')//Èç¹ûÃüÁîºóÃæµÄÊÇÎÊºÅ£¬·µ»Øhelp
+	if (*str == '?')//Èç¹ûÃüÁîºóÃæµÄÊÇÎÊºÅ£¬·µ»Øhelp
 	{
 		*argc = 0;
 		return PARAMETER_HELP;
 	}
 
-	for (ucCnt = 0; *pcStr && ucCnt < 4; ++ucCnt)//×Ö·û²»Îª ¡®\0' µÄÊ±ºò
+	for (ucCnt = 0; *str && ucCnt < 4; ++ucCnt)//×Ö·û²»Îª ¡®\0' µÄÊ±ºò
 	{
 		argv[ucCnt] = 0;
 
 		//Ñ­»·°Ñ×Ö·û´®×ªÎªÊı×Ö£¬Ö±µ½×Ö·û²»Îª 0 - 9
-		for (ucValue = *pcStr - '0';ucValue < 10; ucValue = *(++pcStr) - '0')
+		for (ucValue = *str - '0';ucValue < 10; ucValue = *(++str) - '0')
 		{
 			argv[ucCnt] = argv[ucCnt] * 10 + ucValue;
 		}
 
-		if (*pcStr == '\0') //²»ĞèÒªÅĞ¶Ï \r\n 
+		if (*str == '\0') //²»ĞèÒªÅĞ¶Ï \r\n 
 		{
 			*argc = ucCnt + 1 ;
 			return PARAMETER_CORRECT;
 		}
 		else
-		if (*pcStr != ' ')	//Èç¹û²»ÊÇ 0 - 9 ¶øÇÒ²»ÊÇ¿Õ¸ñ£¬ÔòÊÇ´íÎó×Ö·û
+		if (*str != ' ')	//Èç¹û²»ÊÇ 0 - 9 ¶øÇÒ²»ÊÇ¿Õ¸ñ£¬ÔòÊÇ´íÎó×Ö·û
 		{
 			*argc = 0;
 			return PARAMETER_ERROR;
 		}
 		
-		while (' ' == *pcStr) ++pcStr;//Ìø¹ı¿Õ¸ñ,¼ÌĞøÅĞ¶ÏÏÂÒ»¸ö²ÎÊı
+		while (' ' == *str) ++str;//Ìø¹ı¿Õ¸ñ,¼ÌĞøÅĞ¶ÏÏÂÒ»¸ö²ÎÊı
 
 	}
 	
@@ -548,16 +546,16 @@ int iShell_ParseParam(char * pcStr,int * argc,int argv[])
 
 /********************************************************************
 	* @author   ¹ÅÃ´Äş
-	* @brief    _Shell_RegisterCommand 
+	* @brief    _shell_register 
 	*           ×¢²áÒ»¸öÃüÁîºÅºÍ¶ÔÓ¦µÄÃüÁîº¯Êı £¬Ç°×ºÎª '_' ±íÊ¾²»½¨ÒéÖ±½Óµ÷ÓÃ´Ëº¯Êı
-	* @param    pCmdName    ÃüÁîÃû
-	* @param    Func        ÃüÁîÃû¶ÔÓ¦µÄÖ´ĞĞº¯Êı
+	* @param    cmd_name    ÃüÁîÃû
+	* @param    cmd_func        ÃüÁîÃû¶ÔÓ¦µÄÖ´ĞĞº¯Êı
 	* @param    newcmd      ÃüÁî¿ØÖÆ¿é¶ÔÓ¦µÄÖ¸Õë
 	* @return   void
 */
-void _Shell_RegisterCommand(char * pCmdName, cmd_fn_def Func,struct shell_cmd * newcmd)//×¢²áÃüÁî
+void _shell_register(char * cmd_name, cmd_fn_def cmd_func,struct shell_cmd * newcmd)//×¢²áÃüÁî
 {
-	char * pcStr = pCmdName;
+	char * str = cmd_name;
 	union uncmd unCmd ;
 
 	uint8_t clen;
@@ -565,25 +563,25 @@ void _Shell_RegisterCommand(char * pCmdName, cmd_fn_def Func,struct shell_cmd * 
 	uint8_t bcrc8 = 0;
 	uint8_t sSum = 0;
 
-	for (clen = 0; *pcStr ; ++clen)
+	for (clen = 0; *str ; ++clen)
 	{
-		sSum += *pcStr;
-		fcrc8 = F_CRC8_Table[fcrc8^*pcStr];
-		bcrc8 = B_CRC8_Table[bcrc8^*pcStr];
-		++pcStr;
+		sSum += *str;
+		fcrc8 = F_CRC8_Table[fcrc8^*str];
+		bcrc8 = B_CRC8_Table[bcrc8^*str];
+		++str;
 	}
 
 	unCmd.part.CRC1 = fcrc8;
 	unCmd.part.CRC2 = bcrc8;
 	unCmd.part.Len = clen;
 	unCmd.part.Sum = sSum;
-	unCmd.part.FirstChar = *pCmdName;
+	unCmd.part.FirstChar = *cmd_name;
 	
 	newcmd->ID = unCmd.ID;
-	newcmd->pName = pCmdName;
-	newcmd->Func = Func;
+	newcmd->pName = cmd_name;
+	newcmd->Func = cmd_func;
 
-	iShell_InsertCmd(newcmd);//ÃüÁî¶ş²æÊ÷²åÈë´Ë½Úµã
+	shell_insert_cmd(newcmd);//ÃüÁî¶ş²æÊ÷²åÈë´Ë½Úµã
 
 	return ;
 }
@@ -592,17 +590,17 @@ void _Shell_RegisterCommand(char * pCmdName, cmd_fn_def Func,struct shell_cmd * 
 
 /********************************************************************
 	* @author   ¹ÅÃ´Äş
-	* @brief    _Shell_RegisterCommand 
+	* @brief    _shell_register 
 	*           ×¢²áÒ»¸öÃüÁîºÅºÍ¶ÔÓ¦µÄÃüÁîº¯Êı£¬Ç°×ºÎª '_' ±íÃ÷²»½¨ÒéÖ±½Óµ÷ÓÃ
-	* @param    pCmdName    ÃüÁîÃû
+	* @param    cmd_name    ÃüÁîÃû
 	* @param    Func        ÃüÁîÃû¶ÔÓ¦µÄÖ´ĞĞº¯Êı
 	* @param    newcmd      ÃüÁî¿ØÖÆ¿é¶ÔÓ¦µÄÖ¸Õë
 	* @return   void
 */
-void _Shell_RegisterCommand__(char * pCmdName, cmd_fn_def Func,void * cmdbuf)//×¢²áÃüÁî
+void _Shell_RegisterCommand__(char * cmd_name, cmd_fn_def Func,void * cmdbuf)//×¢²áÃüÁî
 {
 	struct shell_cmd * newcmd = (struct shell_cmd *)cmdbuf;
-	char * pcStr = pCmdName;
+	char * str = cmd_name;
 	union uncmd unCmd ;
 
 	uint8_t clen;
@@ -610,25 +608,25 @@ void _Shell_RegisterCommand__(char * pCmdName, cmd_fn_def Func,void * cmdbuf)//×
 	uint8_t bcrc8 = 0;
 	uint8_t sSum = 0;
 
-	for (clen = 0; *pcStr ; ++clen)
+	for (clen = 0; *str ; ++clen)
 	{
-		sSum += *pcStr;
-		fcrc8 = F_CRC8_Table[fcrc8^*pcStr];
-		bcrc8 = B_CRC8_Table[bcrc8^*pcStr];
-		++pcStr;
+		sSum += *str;
+		fcrc8 = F_CRC8_Table[fcrc8^*str];
+		bcrc8 = B_CRC8_Table[bcrc8^*str];
+		++str;
 	}
 
 	unCmd.part.CRC1 = fcrc8;
 	unCmd.part.CRC2 = bcrc8;
 	unCmd.part.Len = clen;
 	unCmd.part.Sum = sSum;
-	unCmd.part.FirstChar = *pCmdName;
+	unCmd.part.FirstChar = *cmd_name;
 	
 	newcmd->ID = unCmd.ID;
-	newcmd->pName = pCmdName;
+	newcmd->pName = cmd_name;
 	newcmd->Func = Func;
 
-	iShell_InsertCmd(newcmd);//ÃüÁî¶ş²æÊ÷²åÈë´Ë½Úµã
+	shell_insert_cmd(newcmd);//ÃüÁî¶ş²æÊ÷²åÈë´Ë½Úµã
 
 	return ;
 }
@@ -636,17 +634,17 @@ void _Shell_RegisterCommand__(char * pCmdName, cmd_fn_def Func,void * cmdbuf)//×
 
 /********************************************************************
 	* @author   ¹ÅÃ´Äş
-	* @brief    vShell_CmdList 
+	* @brief    shell_cmdlist 
 	*           ÏÔÊ¾ËùÓĞ×¢²áÁËµÄÃüÁî
-	* @param    pcStr       ÃüÁîºóËù¸ú²ÎÊı
+	* @param    str       ÃüÁîºóËù¸ú²ÎÊı
 	* @return   NULL
 */
-void vShell_CmdList(void * arg)
+void shell_cmdlist(void * arg)
 {
 	shellcmd_t * CmdNode;
 	struct avl_node *node ;
 	
-	for (node = avl_first(&shell_avltree_root); node; node = avl_next(node))//±éÀúºìºÚÊ÷
+	for (node = avl_first(&shell_root); node; node = avl_next(node))//±éÀúºìºÚÊ÷
 	{
 		CmdNode = avl_entry(node,struct shell_cmd, cmd_node);
 		printk("\r\n\t%s", CmdNode->pName);
@@ -657,18 +655,18 @@ void vShell_CmdList(void * arg)
 
 
 /********************************************************************
-	* @brief vShell_CleanScreen ¿ØÖÆÌ¨ÇåÆÁ
+	* @brief shell_clean_screnn ¿ØÖÆÌ¨ÇåÆÁ
 	* @param void
 	* @return NULL
 */
-void vShell_CleanScreen(void * arg)
+void shell_clean_screnn(void * arg)
 {
 	printk("\033[2J\033[%d;%dH",0,0);
 }
 
 
 
-void vShell_DebugFrame(void * arg)
+void shell_puts_set(void * arg)
 {
 	default_puts = current_puts;
 }
@@ -677,13 +675,13 @@ void vShell_DebugFrame(void * arg)
 
 /**
 	* @author   ¹ÅÃ´Äş
-	* @brief    vShell_Init 
+	* @brief    shell_init 
 	*           shell ³õÊ¼»¯
 	* @param    sign : shell ÊäÈë±êÖ¾£¬Èç shell >
 	* @param    puts : shell Ä¬ÈÏÊä³ö£¬Èç´Ó´®¿ÚÊä³ö¡£
 	* @return   NULL
 */
-void vShell_Init(char * sign,fnFmtOutDef puts)
+void shell_init(char * sign,fnFmtOutDef puts)
 {
 //	shell_input_sign = sign;
 	sprintf(shell_input_sign,sign);
@@ -691,9 +689,9 @@ void vShell_Init(char * sign,fnFmtOutDef puts)
 	print_DefaultOut(puts);
 	
 	//×¢²á»ù±¾ÃüÁî
-	vShell_RegisterCommand("cmd-list",vShell_CmdList);
-	vShell_RegisterCommand("clear"   ,vShell_CleanScreen);
-	vShell_RegisterCommand("debug-info",vShell_DebugFrame);
+	shell_register_command("cmd-list"    ,shell_cmdlist);
+	shell_register_command("clear"       ,shell_clean_screnn);
+	shell_register_command("debug-info",shell_puts_set);
 }
 
 

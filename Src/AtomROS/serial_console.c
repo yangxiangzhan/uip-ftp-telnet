@@ -187,7 +187,7 @@ int task_SerialConsole(void * arg)
 		//task_cond_wait(iUsartHal_RxPktOut(&HalPkt,&ucLen));
 
 		while (iUsartHal_RxPktOut(&HalPkt,&ucLen))
-			vShell_Input(&stUsartShellBuf,HalPkt,ucLen);//数据帧传入应用层
+			shell_input(&stUsartShellBuf,HalPkt,ucLen);//数据帧传入应用层
 		
 		task_join(&stUsartIapTask); //在线升级时数据流往 iap 任务走
 	}
@@ -217,20 +217,19 @@ void vSerialConsole_Init(char * info)
 {
 	vUsartHal_Init(); //先初始化硬件层
 	
-	vShell_InitBuf(&stUsartShellBuf,vUsartHal_Output);
-
+	SHELL_MALLOC(&stUsartShellBuf,vUsartHal_Output);
 
 	if (SCB->VTOR != FLASH_BASE)
 	{
-		vShell_RegisterCommand("update-iap",vShell_UpdateCmd);	
+		shell_register_command("update-iap",vShell_UpdateCmd);	
 	}
 	else
 	{
-		vShell_RegisterCommand("update-app",vShell_UpdateCmd);	
-		vShell_RegisterCommand("jump-app",vShell_JumpCmd);
+		shell_register_command("update-app",vShell_UpdateCmd);	
+		shell_register_command("jump-app",vShell_JumpCmd);
 	}
 
-	vShell_RegisterCommand("reboot"  ,vShell_RebootSystem);
+	shell_register_command("reboot"  ,vShell_RebootSystem);
 	
 	task_create(&stSerialConsoleTask,NULL,task_SerialConsole,NULL);
 	

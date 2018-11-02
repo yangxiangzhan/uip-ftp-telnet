@@ -6,7 +6,7 @@ typedef char uip_tcp_appstate_t ;
 typedef char uip_udp_appstate_t;
 
 #ifndef     UIP_APPCALL 
-	#define UIP_APPCALL  uIP_TcpAppCall
+	#define UIP_APPCALL  uip_tcp_app_call
 #endif
 
 
@@ -16,11 +16,11 @@ typedef char uip_udp_appstate_t;
 
 void uIP_UdpAppCall(void) ;
 
-void uIP_TcpAppCall(void) ;
+void uip_tcp_app_call(void) ;
 
-void uIP_AppInit(void);
+void uip_app_init(void);
 
-void uIP_AppPoll(void);
+void uip_app_poll(void);
 
 #endif
 

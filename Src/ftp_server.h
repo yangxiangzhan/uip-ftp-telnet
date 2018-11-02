@@ -6,13 +6,13 @@
 #define FTP_DATA_PORT 45678U //ftp Êý¾Ý¶Ë¿Ú
 
 
-void uIP_FtpServerInit(void);
+void ftp_server_init(void);
 
-void uIP_FtpCtrlPortCall(void);
+void ftp_ctrl_port_call(void);
 
-void uIP_FtpDataPortCall(void);
+void ftp_data_port_call(void);
 
-void uIP_FtpServerPro(void);
+void ftp_server_process(void);
 
 #endif
 

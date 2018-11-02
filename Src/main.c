@@ -98,7 +98,7 @@ void vShell_GetLocalIp(void * arg)
 }
 
 
-void uIP_BaseInit(void)
+void uip_base_init(void)
 {
 	tapdev_init();
 	uip_init();
@@ -124,10 +124,10 @@ void uIP_BaseInit(void)
 	timer_set(&periodic_timer, CLOCK_SECOND / 2);
 	timer_set(&arp_timer, CLOCK_SECOND * 10);
 
-	vShell_RegisterCommand("ifconfig",vShell_GetLocalIp);
+	shell_register_command("ifconfig",vShell_GetLocalIp);
 }
 
-void uIP_BasePoll(void)
+void uip_base_poll(void)
 {
 	uip_len = tapdev_read();
 	if(uip_len > 0) 
@@ -255,11 +255,11 @@ int main(void)
   MX_SDIO_SD_Init();
   MX_FATFS_Init();
   /* USER CODE BEGIN 2 */
-	vShell_Init("uIP >",vUsartHal_Output);
+	shell_init("uIP >",vUsartHal_Output);
 	vSerialConsole_Init((char *)acSTM32LOGO);
 	
-	uIP_BaseInit();
-	uIP_AppInit();
+	uip_base_init();
+	uip_app_init();
 	
 	ioctrl(LED2,1);
 	
@@ -271,8 +271,8 @@ int main(void)
   /* USER CODE BEGIN WHILE */
   while (1)
   {
-	uIP_BasePoll();
-	uIP_AppPoll();
+	uip_base_poll();
+	uip_app_poll();
 	OS_scheduler();
   /* USER CODE END WHILE */
 

@@ -247,9 +247,9 @@ void MX_FATFS_Init(void)
 		printk("fatfs Mount success\r\n");
 		if (f_opendir(&g_stCurrentDir, g_acCurrentPath) == FR_OK)
 		{
-			vShell_RegisterCommand("ls",vFatfs_ScanDir);
-			vShell_RegisterCommand("cd",vFatfs_CD);
-			//vShell_RegisterCommand("touch",vFatfs_TouchFile);
+			shell_register_command("ls",vFatfs_ScanDir);
+			shell_register_command("cd",vFatfs_CD);
+			//shell_register_command("touch",vFatfs_TouchFile);
 			f_closedir(&g_stCurrentDir);
 		}
 	}  	
