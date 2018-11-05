@@ -29,44 +29,41 @@
 /*---------------------------------------------------------------------------*/
 
 
-struct shell_buf stTelnetShell;
-struct uip_conn *telnet_bind = NULL;
-static uint8_t	 cTelnetState = TELNET_NORMAL;
+static struct shell_buf telent_shellbuf;
+static struct uip_conn * telnet_bind = NULL;
+static uint8_t	 telnet_state = TELNET_NORMAL;
+static __align(4) char telnet_buf[UIP_TCP_MSS+4] = {0};
+static volatile int telnet_buftail = 0;
 
-__align(4) char acTelnetBuf[UIP_TCP_MSS+4] = {0};
-
-volatile int buftail = 0;
-
-void vTelnetOut(char * buf,uint16_t len)
+void telnet_puts(char * buf,uint16_t len)
 {
-	if (cTelnetState == TELNET_NORMAL && len + buftail < UIP_TCP_MSS) 
+	if (telnet_state == TELNET_NORMAL && len + telnet_buftail < UIP_TCP_MSS) 
 	{
-		memcpy(&acTelnetBuf[buftail],buf,len);
-		buftail += len;
+		memcpy(&telnet_buf[telnet_buftail],buf,len);
+		telnet_buftail += len;
 	}
 	else
-		buftail = 0;
+		telnet_buftail = 0;
 }
 
 
 
 
-static void
-vTelnetOpt(uint8_t option, uint8_t value) //vTelnetOpt(TELNET_DONT,1)
+static void telnet_option(uint8_t option, uint8_t value) //telnet_option(TELNET_DONT,1)
 {
-	uint32_t iNewTail = 3 + buftail;
-	if (iNewTail < UIP_TCP_MSS) 
+	uint32_t new_tail = 3 + telnet_buftail;
+	if (new_tail < UIP_TCP_MSS) 
 	{
-		char * pBuf = &acTelnetBuf[buftail];
+		char * pBuf = &telnet_buf[telnet_buftail];
 		*pBuf = (char)TELNET_IAC;
 		*++pBuf = (char)option;
 		*++pBuf = (char)value;
-		buftail = iNewTail;
+		telnet_buftail = new_tail;
 	}
 }
 
 
-void vShell_EraseBuf(void * arg)
+void erase_telnet_flash(void * arg)
 {
 	uint32_t SectorError;
     FLASH_EraseInitTypeDef FlashEraseInit;
@@ -86,45 +83,45 @@ void vShell_EraseBuf(void * arg)
 
 void telnet_server_init(void)
 {
-	SHELL_MALLOC(&stTelnetShell ,vTelnetOut);	
-	shell_register_command("telnet-erase",vShell_EraseBuf);	
+	SHELL_MALLOC(&telent_shellbuf ,telnet_puts);	
+	shell_register_command("telnet-erase",erase_telnet_flash);	
 	uip_listen(HTONS(23));
 }
 
 
 #if 0  //从 telnet 接收文件并生成为 telnet.bin
 
-void vTelnet_Input(uint8_t * pcInput,uint16_t len)
+void telnet_input(uint8_t * srt,uint16_t len)
 {
 	static FRESULT cFileState = FR_NO_FILE;
 	static FIL stTelnetFile = {0};		 /* File object */
-	static uint16_t sPktTail = 0;
-	static uint8_t cLastPktDeal = 0;
+	static uint16_t pkt_tail = 0;
+	static uint8_t pkt_remix = 0;
 	
-	uint8_t * pcCopy;
-	uint8_t * pcPktEnd;
+	uint8_t * copy;
+	uint8_t * pkt_end;
 
 	uint32_t iByteWritten;
 
-	if (TELNET_NORMAL != cTelnetState) 
+	if (TELNET_NORMAL != telnet_state) 
 		goto TransmitBin;
 	
 Normal:
 	while(len > 2)
 	{
-		uint8_t telnet_opt = pcInput[1] ;
-		uint8_t telnet_val = pcInput[2] ;
-		if( *pcInput == TELNET_IAC && telnet_opt > 250 ) 
+		uint8_t telnet_opt = srt[1] ;
+		uint8_t telnet_val = srt[2] ;
+		if( *srt == TELNET_IAC && telnet_opt > 250 ) 
 		{
-			pcInput += 3;
+			srt += 3;
 			len -= 3;
 			
 			if (0 == telnet_val) //只回复二进制命令
 			{
 				if (TELNET_WILL == telnet_opt)
-					cTelnetState = TELNET_BIN_TRAN;
+					telnet_state = TELNET_BIN_TRAN;
 				else
-					vTelnetOpt(telnet_opt, telnet_val);
+					telnet_option(telnet_opt, telnet_val);
 			}
 		}
 		else
@@ -132,101 +129,100 @@ Normal:
 	}
 
 	if ( len )
-		shell_input(&stTelnetShell,(char*)pcInput,len);
+		shell_input(&telent_shellbuf,(char*)srt,len);
 
 	return ;
 	
 TransmitBin:
 	
-	if( pcInput[0] == TELNET_IAC && 0 == pcInput[2] && pcInput[1] > 250) 
+	if( srt[0] == TELNET_IAC && 0 == srt[2] && srt[1] > 250) 
 	{
 		if (FR_OK == cFileState)
 		{
-			if (sPktTail)
+			if (pkt_tail)
 			{
-				cFileState = f_write(&stTelnetFile,(void*)acTelnetBuf, sPktTail, &iByteWritten);
-				if ((iByteWritten != sPktTail) || (cFileState != FR_OK))
+				cFileState = f_write(&stTelnetFile,(void*)telnet_buf, pkt_tail, &iByteWritten);
+				if ((iByteWritten != pkt_tail) || (cFileState != FR_OK))
 					Errors("telnet write reamain data error\r\n");
-				sPktTail = 0;
+				pkt_tail = 0;
 			}
-			sprintf(&acTelnetBuf[4],"\r\nGet file,size:%d byte\r\n",f_size(&stTelnetFile));
-			vTelnetOut(&acTelnetBuf[4],strlen(&acTelnetBuf[4]));
+			sprintf(&telnet_buf[4],"\r\nGet file,size:%d byte\r\n",f_size(&stTelnetFile));
+			telnet_puts(&telnet_buf[4],strlen(&telnet_buf[4]));
 			f_close(&stTelnetFile);
 			cFileState = FR_NO_FILE;
 		}
-		cTelnetState = TELNET_NORMAL;
+		telnet_state = TELNET_NORMAL;
 		goto Normal;
 	}
 
-	if (TELNET_BIN_TRAN != cTelnetState) return;
+	if (TELNET_BIN_TRAN != telnet_state) return;
 
 	if (cFileState) //(0)//文件未打开
 	{ 
-		sPktTail = 0;
-		cLastPktDeal = 0;
+		pkt_tail = 0;
+		pkt_remix = 0;
 		cFileState = f_open(&stTelnetFile, "telnet.bin", FA_CREATE_ALWAYS | FA_WRITE);
 		if (FR_OK != cFileState)
-			cTelnetState = TELNET_BIN_ERROR;
+			telnet_state = TELNET_BIN_ERROR;
 	}
 	
-	pcCopy = pcInput+cLastPktDeal;//0xff 0xff  被分包的情况，跳过第一个 ff
-	pcPktEnd = pcInput+len ;
-	cLastPktDeal = (pcInput[len-1] == 0xff && pcInput[len-2] != 0xff);//0xff 0xff  被分包的情况
+	copy = srt+pkt_remix;//0xff 0xff  被分包的情况，跳过第一个 ff
+	pkt_end = srt+len ;
+	pkt_remix = (srt[len-1] == 0xff && srt[len-2] != 0xff);//0xff 0xff  被分包的情况
 
-	for(uint8_t * pcBuf = (uint8_t*)&acTelnetBuf[sPktTail];  pcCopy < pcPktEnd ;++sPktTail)
+	for(uint8_t * pcBuf = (uint8_t*)&telnet_buf[pkt_tail];  copy < pkt_end ;++pkt_tail)
 	{
-		*pcBuf++ = *pcCopy++ ;
-		if (*pcCopy == 0xff) ++pcCopy;//如果文件中存在 0xff ，在 SecureCRT 会发两个 0xff ，需要剔除一个
+		*pcBuf++ = *copy++ ;
+		if (*copy == 0xff) ++copy;//如果文件中存在 0xff ，在 SecureCRT 会发两个 0xff ，需要剔除一个
 	}
 	
-	uint16_t sRemain = sPktTail & 0x03;//取4的余数
-	sPktTail -= sRemain;                //fatfs 以4的整数倍写入，否则容易出错
-	cFileState = f_write(&stTelnetFile,(void*)acTelnetBuf, sPktTail, &iByteWritten);
-	if ((cFileState != FR_OK)||(iByteWritten != sPktTail))
+	uint16_t remain = pkt_tail & 0x03;//取4的余数
+	pkt_tail -= remain;                //fatfs 以4的整数倍写入，否则容易出错
+	cFileState = f_write(&stTelnetFile,(void*)telnet_buf, pkt_tail, &iByteWritten);
+	if ((cFileState != FR_OK)||(iByteWritten != pkt_tail))
 	{
 		f_close(&stTelnetFile);
-		cTelnetState = TELNET_BIN_ERROR;
+		telnet_state = TELNET_BIN_ERROR;
 		Errors("telnet write file error\r\n");	
 	}
 
-	if (sRemain) //此次没写完的留到下次写
-		memcpy(acTelnetBuf,&acTelnetBuf[sPktTail],sRemain);
-	sPktTail = sRemain;
+	if (remain) //此次没写完的留到下次写
+		memcpy(telnet_buf,&telnet_buf[pkt_tail],remain);
+	pkt_tail = remain;
 	
 	return ;
 }
 
 #else
 
-void vTelnet_Input(uint8_t * pcInput,uint16_t len)
+static void telnet_input(uint8_t * srt,uint16_t len)
 {
-	static uint16_t  sPktTail = 0;
-	static uint32_t  iFlashAddr ;
-	static uint32_t* piData ;	
-	static uint8_t   cLastPktDeal = 0;
-	
-	uint8_t * pcCopy;
-	uint8_t * pcPktEnd;
+	static uint32_t  flash_addr ;
+	static uint32_t* value ;	
+	static uint16_t  pkt_tail = 0;
+	static uint8_t   pkt_remix = 0;
+	uint8_t        * pkt_end;
+	uint8_t        * copy;
 
-	if (TELNET_NORMAL != cTelnetState) 
+	if (TELNET_NORMAL != telnet_state) 
 		goto TransmitBin;
 	
 Normal:
 	while(len > 2)
 	{
-		uint8_t telnet_opt = pcInput[1] ;
-		uint8_t telnet_val = pcInput[2] ;
-		if( *pcInput == TELNET_IAC && telnet_opt > 250 ) 
+		uint8_t telnet_opt = srt[1] ;
+		uint8_t telnet_val = srt[2] ;
+		if( *srt == TELNET_IAC && telnet_opt > 250 ) 
 		{
-			pcInput += 3;
+			srt += 3;
 			len -= 3;
 			
 			if (0 == telnet_val) //只回复二进制命令
 			{
 				if (TELNET_WILL == telnet_opt)
-					cTelnetState = TELNET_BIN_TRAN;
+					telnet_state = TELNET_BIN_TRAN;
 				else
-					vTelnetOpt(telnet_opt, telnet_val);
+					telnet_option(telnet_opt, telnet_val);
 			}
 		}
 		else
@@ -234,73 +230,75 @@ Normal:
 	}
 
 	if ( len )
-		shell_input(&stTelnetShell,(char*)pcInput,len);
+		shell_input(&telent_shellbuf,(char*)srt,len);
 
 	return ;
 	
 TransmitBin:
 	
-	if( pcInput[0] == TELNET_IAC && 0 == pcInput[2] && pcInput[1] > 250) 
+	if( srt[0] == TELNET_IAC && 0 == srt[2] && srt[1] > 250) 
 	{
-		cTelnetState = TELNET_NORMAL;
-		if (iFlashAddr)
+		telnet_state = TELNET_NORMAL;
+		if (flash_addr)
 		{
-			if (sPktTail)
+			if (pkt_tail)
 			{
-				HAL_FLASH_Program(FLASH_TYPEPROGRAM_WORD,iFlashAddr,*piData);
-				iFlashAddr += 4;
-				sPktTail = 0;
+				HAL_FLASH_Program(FLASH_TYPEPROGRAM_WORD,flash_addr,*value);
+				flash_addr += 4;
+				pkt_tail = 0;
 			}
-			sprintf(&acTelnetBuf[4],"\r\nGet file,size:%d byte\r\n",iFlashAddr - 0x8060000);
-			vTelnetOut(&acTelnetBuf[4],strlen(&acTelnetBuf[4]));
+			sprintf(&telnet_buf[4],"\r\nGet file,size:%d byte\r\n",flash_addr - 0x8060000);
+			telnet_puts(&telnet_buf[4],strlen(&telnet_buf[4]));
 			HAL_FLASH_Lock();
-			iFlashAddr = 0;
+			flash_addr = 0;
 		}
 		goto Normal;
 	}
 
-	if (TELNET_BIN_TRAN != cTelnetState) return;
+	if (TELNET_BIN_TRAN != telnet_state) 
+		return;
 
-	if (!iFlashAddr) //(0)//文件未打开
+	if (!flash_addr) //(0)//文件未打开
 	{
-		sPktTail = 0;
-		cLastPktDeal = 0;
-		iFlashAddr = 0x8060000;
+		pkt_tail = 0;
+		pkt_remix = 0;
+		flash_addr = 0x8060000;
 		HAL_FLASH_Unlock();     //解锁 flash
 		//iUsartHal_IAP_Erase(6);//一般情况下 0x8060000 已擦除
 	}
 	
-	pcCopy = pcInput + cLastPktDeal;//0xff 0xff  被分包的情况，跳过第一个 ff
-	pcPktEnd = pcInput + len ;
-	cLastPktDeal = (pcInput[len-1] == 0xff && pcInput[len-2] != 0xff);//0xff 0xff  被分包的情况
+	copy = srt + pkt_remix;//0xff 0xff  被分包的情况，跳过第一个 ff
+	pkt_end = srt + len ;
+	pkt_remix = (srt[len-1] == 0xff && srt[len-2] != 0xff);//0xff 0xff  被分包的情况
 
-	for(uint8_t * pcBuf = (uint8_t*)&acTelnetBuf[sPktTail];  pcCopy < pcPktEnd ;++sPktTail)
+	for(uint8_t * buf = (uint8_t*)&telnet_buf[pkt_tail];  copy < pkt_end ;++pkt_tail)
 	{
-		*pcBuf++ = *pcCopy++ ;
-		if (*pcCopy == 0xff) ++pcCopy;//如果文件中存在 0xff ，在 SecureCRT 会发两个 0xff ，需要剔除一个
+		*buf++ = *copy++ ;
+		if (*copy == 0xff) ++copy;//如果文件中存在 0xff ，在 SecureCRT 会发两个 0xff ，需要剔除一个
 	}
 	
 	//flash 以4的整数倍写入，不足4字节留到下一包写入  
-	uint16_t sRemain = sPktTail & 0x03;
-	sPktTail >>= 2;                   // 除于 4
-	piData = (uint32_t*)acTelnetBuf;
+	uint16_t remain = pkt_tail & 0x03;
+	pkt_tail >>= 2;                   // 除于 4
+	value = (uint32_t*)telnet_buf;
 
-	for(uint32_t iCnt = 0;iCnt < sPktTail ; ++iCnt,++piData)
+	for(uint32_t i = 0;i < pkt_tail ; ++i,++value)
 	{
-		if (HAL_OK != HAL_FLASH_Program(FLASH_TYPEPROGRAM_WORD,iFlashAddr,*piData))
+		if (HAL_OK != HAL_FLASH_Program(FLASH_TYPEPROGRAM_WORD,flash_addr,*value))
 		{
-			cTelnetState = TELNET_BIN_ERROR;
-			iFlashAddr = 0;
+			telnet_state = TELNET_BIN_ERROR;
+			flash_addr = 0;
 			Errors("write data error\r\n");
 			return ;
 		}
 		else
-			iFlashAddr += 4;
+			flash_addr += 4;
 	}
 	
-	if (sRemain) //此次没写完的留到下次写
-		memcpy(acTelnetBuf,&acTelnetBuf[sPktTail<<2],sRemain);
-	sPktTail = sRemain;
+	if (remain) //此次没写完的留到下次写
+		memcpy(telnet_buf,&telnet_buf[pkt_tail<<2],remain);
+	
+	pkt_tail = remain;
 	
 	return ;
 }
@@ -313,14 +311,14 @@ TransmitBin:
 
 
 
-extern void vUsartHal_Output(char * buf, uint16_t len);
+//extern void hal_usart_puts(char * buf, uint16_t len);
 
 
 void telnet_port_call(void)
 {
 	if(uip_connected()) 
 	{
-		vTelnetOpt(TELNET_DO,1);   //客户端开启回显
+		telnet_option(TELNET_DO,1);   //客户端开启回显
 		printk("telnet connect\r\n");
 	}
 
@@ -337,25 +335,25 @@ void telnet_port_call(void)
 
   if(uip_newdata()) 
   {
-	  vTelnet_Input((uint8_t*)uip_appdata,uip_datalen());
+	  telnet_input((uint8_t*)uip_appdata,uip_datalen());
 	  if ( !telnet_bind )
 	  {
-		  if ( default_puts == vTelnetOut )
+		  if ( default_puts == telnet_puts )
 			  telnet_bind = uip_conn;
 	  }
 	  else
 	  {
-		  if ( default_puts != vTelnetOut )
+		  if ( default_puts != telnet_puts )
 			  telnet_bind =  NULL;
 	  }
   }
 
   if (uip_poll()) vLED2_Loop();
   
-  if (buftail)
+  if (telnet_buftail)
   {
-	  uip_send(acTelnetBuf,buftail);
-	  buftail = 0;
+	  uip_send(telnet_buf,telnet_buftail);
+	  telnet_buftail = 0;
   }
 }
 
@@ -368,9 +366,9 @@ void telnet_port_call(void)
 
 void telnet_server_pro(void)
 {  
-	if (buftail)
+	if (telnet_buftail)
 	{
-		if ( default_puts != vTelnetOut ) //解绑端口
+		if ( default_puts != telnet_puts ) //解绑端口
 		  	telnet_bind = NULL;
 
 		if ( telnet_bind )  
@@ -380,7 +378,7 @@ void telnet_server_pro(void)
 			tapdev_send();
 		}
 
-		buftail = 0;
+		telnet_buftail = 0;
 	}
 }
 

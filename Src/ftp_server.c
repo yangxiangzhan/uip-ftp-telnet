@@ -445,7 +445,6 @@ static uint32_t ctrl_port_reply_DELE(char * arg,uint16_t arglen)
 */
 static uint32_t ctrl_port_reply_STOR(char * arg,uint16_t arglen)
 {
-	static const char reply_msg[] = "125 Waiting\r\n" ;
 	if (ftpstate.polling)//如果数据端口正在输出数据，控制端口返回错误，否则会出现数据冲突
 	{
 		ctrl_msg = (char*)ftp_msg_421;
@@ -454,9 +453,12 @@ static uint32_t ctrl_port_reply_STOR(char * arg,uint16_t arglen)
 	}
 	else
 	{
+		static const char reply_msg[] = "125 Waiting\r\n" ;
 		char * file_path = arg;
 		char * path_end = arg + arglen - 1;	
+		
 		LEGAL_PATH(file_path,path_end);
+		
 		if (*file_path != '/')//相对路径
 			sprintf(ftp_ctrl_buf,"%s/%s",ftp_current_dir,file_path);
 		else
@@ -471,16 +473,16 @@ static uint32_t ctrl_port_reply_STOR(char * arg,uint16_t arglen)
 
 void ftp_ctrl_port_call(void)
 {
-	static const char acFtpUnknownCmd[] = "500 Unknown command\r\n";
-	static const char acFtpConnect[] = "220 Operation successful\r\n";
+	static const char unknown_msg[] = "500 Unknown command\r\n";
+	static const char connect_msg[] = "220 Operation successful\r\n";
 	
 	static char needpoll = 0; //需不需要调用数据端口
 	static uint16_t rexmit = 0;//如需重发的长度
 	
 	if(uip_connected())
 	{
-		ctrl_msg = (char*)acFtpConnect;
-		ctrl_msg_len = sizeof(acFtpConnect)-1;
+		ctrl_msg = (char*)connect_msg;
+		ctrl_msg_len = sizeof(connect_msg)-1;
 		goto FtpCtrlSend; //回复连接成功
 	}
 
@@ -509,7 +511,7 @@ void ftp_ctrl_port_call(void)
 
 	if(uip_newdata()) 
 	{
- 		struct ftp_cmd * ftpcmdMatch ;
+ 		struct ftp_cmd * ctrlcmd ;
 	 	uint32_t cmdindex = FTP_STR2ID(uip_appdata);// 把命令字符串转为命令码
 		char *   arg = (char *)uip_appdata + 4;        //命令字符串所跟参数
 		uint16_t arglen = uip_datalen() - 4;
@@ -517,17 +519,17 @@ void ftp_ctrl_port_call(void)
 		if ( *(arg-1) < 'A' || *(arg-1) > 'z' )//有些命令只有三个字节，需要判断
 			cmdindex &= 0x00ffffff;
 
-		ftpcmdMatch = ftp_search_cmd(cmdindex);//匹配命令号
-		if (ftpcmdMatch)
+		ctrlcmd = ftp_search_cmd(cmdindex);//匹配命令号
+		if (ctrlcmd)
 		{
-			needpoll = ftpcmdMatch->func(arg,arglen);
+			needpoll = ctrlcmd->func(arg,arglen);
 			if ( needpoll )          //需要调用数据端口 ，先在控制端口进行信息回复，收到应答后再调用
 				ftpstate.ctrl_conn = uip_conn; //记录绑定控制端口，数据端口结束传输后需要回到此端口连接
 		}
 		else
 		{
-			ctrl_msg = (char*)acFtpUnknownCmd;
-			ctrl_msg_len = sizeof(acFtpUnknownCmd)-1;
+			ctrl_msg = (char*)unknown_msg;
+			ctrl_msg_len = sizeof(unknown_msg)-1;
 		}
 		goto FtpCtrlSend;
 	}
@@ -551,23 +553,23 @@ FtpCtrlSend:
 
 static uint32_t data_port_reply_LIST (void)
 {
-	static char cContinueScan = 0;
-	static DIR stFtpCurrentDir;
+	static char continue_scan = 0;
+	static DIR ftp_dir;
 	
-	if (0 == cContinueScan) 
+	if (0 == continue_scan) 
 	{
-		cContinueScan = 1;
-		if (FR_OK != f_opendir(&stFtpCurrentDir,ftp_current_dir))
+		continue_scan = 1;
+		if (FR_OK != f_opendir(&ftp_dir,ftp_current_dir))
 			goto ScanDirDone ;
 	}
 	
 	while(1)
 	{
-		struct FileDate * pStDate ;
-		struct FileTime * pStTime ;
-		char * pcBuf = &data_msg[data_msg_len];
+		struct FileDate * file_date ;
+		struct FileTime * file_time ;
+		char * buf = &data_msg[data_msg_len];
 		FILINFO fno;
-	    FRESULT res = f_readdir(&stFtpCurrentDir, &fno); /* Read a directory item */
+	    FRESULT res = f_readdir(&ftp_dir, &fno); /* Read a directory item */
 		
 		if (res != FR_OK || fno.fname[0] == 0) /* Break on error or end of dir */
 			break; 
@@ -575,29 +577,29 @@ static uint32_t data_port_reply_LIST (void)
 		if ( (fno.fattrib & AM_DIR) && (fno.fattrib != AM_DIR))//不显示只读/系统/隐藏文件夹
 			continue;
 
-		pStDate = (struct FileDate *)(&fno.fdate);
-		pStTime = (struct FileTime *)(&fno.ftime);
+		file_date = (struct FileDate *)(&fno.fdate);
+		file_time = (struct FileTime *)(&fno.ftime);
 		
 		if (fno.fdate == 0 || fno.ftime == 0) //没有日期的文件
-			NORMAL_LIST(pcBuf,fno.fsize,1,1,1980,fno.fname);
+			NORMAL_LIST(buf,fno.fsize,1,1,1980,fno.fname);
 		else
-		if (pStDate->Year + 1980 == 2018) //同一年的文件
-			THIS_YEAR_LIST(pcBuf,fno.fsize,pStDate->Month,pStDate->Day,pStTime->Hour,pStTime->Min,fno.fname);
+		if (file_date->Year + 1980 == 2018) //同一年的文件
+			THIS_YEAR_LIST(buf,fno.fsize,file_date->Month,file_date->Day,file_time->Hour,file_time->Min,fno.fname);
 		else
-			NORMAL_LIST(pcBuf,fno.fsize,pStDate->Month,pStDate->Day,pStDate->Year+1980,fno.fname);
+			NORMAL_LIST(buf,fno.fsize,file_date->Month,file_date->Day,file_date->Year+1980,fno.fname);
 		
 		if (fno.fattrib & AM_DIR )   /* It is a directory */
-			pcBuf[0] = 'd';
+			buf[0] = 'd';
 
-		data_msg_len += strlen(pcBuf);
+		data_msg_len += strlen(buf);
 		if (uip_mss() - data_msg_len < list_min)//如果剩余空间不足以再扫描
 			return FTP_DATA_LIST;
 	}
 	
-	f_closedir(&stFtpCurrentDir); //把路径关闭
+	f_closedir(&ftp_dir); //把路径关闭
 
 ScanDirDone:
-	cContinueScan = 0;
+	continue_scan = 0;
 	return 0;
 }
 
@@ -661,7 +663,7 @@ void ftp_data_port_call(void)
 	if(uip_newdata() && !file_state) //接收数据，一般为接收文件
 	{
 		uint32_t byteswritten;
-		memcpy(data_msg , uip_appdata , uip_len);//需要拷出来，否则会出现不明错误
+		memcpy(data_msg , uip_appdata , uip_len);//uip_appdata 内存地址没有对齐，需要拷出来，否则会出现不明错误
 		file_state = f_write(&ftp_file,(void*)data_msg, uip_len, &byteswritten);
 		if ((byteswritten == 0) || (file_state != FR_OK))
 		{

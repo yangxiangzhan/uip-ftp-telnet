@@ -83,19 +83,19 @@
 #define UsartDMAx                  DMA_x(xDMA)     //串口所在 dma 总线
 #define USARTx                     USART_x(xUSART)   //引用串口
 #define UsartIRQn                  USARTx_IRQn(xUSART) //中断
-#define UsartIRQnFunc              USARTx_IRQHandler(xUSART) //中断函数名
+#define USART_IRQ              USARTx_IRQHandler(xUSART) //中断函数名
 
 #define UsartDmaTxCHx              DMA_Channelx(xDMATxCH)    //串口发送 dma 通道
 #define UsartDmaTxStream           DMA_Streamx(xDMATxStream)
 #define UsartDmaTxIRQn             DMAx_Streamy_IRQn(xDMA,xDMATxStream)
-#define UsartDmaTxIRQFunc          DMAx_Streamy_IRQHandler(xDMA,xDMATxStream) //中断函数名
+#define USART_DMA_TX_IRQ           DMAx_Streamy_IRQHandler(xDMA,xDMATxStream) //中断函数名
 #define UsartDmaTxClearFlag()      DMAx_ClearFlag_TCy(xDMA,xDMATxStream)
 #define UsartDmaTxCompleteFlag()   DMAx_IsActiveFlag_TCy(xDMA,xDMATxStream)
 
 #define UsartDmaRxCHx              DMA_Channelx(xDMARxCH)
 #define UsartDmaRxStream           DMA_Streamx(xDMARxStream)
 #define UsartDmaRxIRQn             DMAx_Streamy_IRQn(xDMA,xDMARxStream)
-#define UsartDmaRxIRQFunc          DMAx_Streamy_IRQHandler(xDMA,xDMARxStream) //中断函数名
+#define USART_DMA_RX_IRQ          DMAx_Streamy_IRQHandler(xDMA,xDMARxStream) //中断函数名
 #define UsartDmaRxClearFlag()      DMAx_ClearFlag_TCy(xDMA,xDMARxStream)
 #define UsartDmaRxCompleteFlag()   DMAx_IsActiveFlag_TCy(xDMA,xDMARxStream)
 
@@ -106,39 +106,39 @@
 //#define HAL_RX_BUF_SIZE    (FLASH_PAGE_SIZE * 2 + 1)//硬件接收缓冲区
 #define HAL_TX_BUF_SIZE    1024  //硬件发送缓冲区
 
-static struct _stUartTx
+static struct _serial_tx
 {
-	uint16_t Tail ;
-	uint16_t PktSize ;
+	uint16_t pkttail ;
+	uint16_t pktsize ;
 	char buf[HAL_TX_BUF_SIZE];
 }
-stUartTx = {0};
- 
+serial_tx = {0};
 
-static struct _stUartRx
+
+static struct _serial_rx
 {
-	uint16_t Tail;
-	uint16_t MaxLen;
+	uint16_t pkttail;
+	uint16_t pktmax;
 	char buf[HAL_RX_BUF_SIZE];
 }
-stUartRx = {0};
+serial_rx = {0};
 
 
-struct
+static struct _serial_queue
 {
-	uint16_t Tail ;
-	uint16_t Head ;
+	uint16_t tail ;
+	uint16_t head ;
 	
-	uint16_t  PktLen[HAL_RX_PACKET_SIZE];
-	char    * Pkt[HAL_RX_PACKET_SIZE];
+	uint16_t  pktlen[HAL_RX_PACKET_SIZE];
+	char    * pktbuf[HAL_RX_PACKET_SIZE];
 }
-stUartRxQueue  = {0};
+serial_rxpkt_queue  = {0};
 
 
 
 
 #if   (xUSART == 1)
-static void vUsartHal_USART1_GPIO_Init(void)
+static void usart1_gpio_init(void)
 {
   LL_GPIO_InitTypeDef GPIO_InitStruct;
   /* Peripheral clock enable */
@@ -196,11 +196,11 @@ static void vUsartHal_USART1_GPIO_Init(void)
 
 
 /** 
-	* @brief vUsartHal_DMA_Init 控制台 DMA 初始化
+	* @brief usart_dma_init 控制台 DMA 初始化
 	* @param void
 	* @return NULL
 */
-static void vUsartHal_DMA_Init(void)
+static void usart_dma_init(void)
 {
 	USART_DMA_ClockInit();	 
 
@@ -246,11 +246,11 @@ static void vUsartHal_DMA_Init(void)
 
 
 /** 
-	* @brief vUsartHal_UART_Init 控制台串口参数初始化
+	* @brief usart_base_init 控制台串口参数初始化
 	* @param void
 	* @return NULL
 */
-static void vUsartHal_UART_Init(void)
+static void usart_base_init(void)
 {
 	LL_USART_InitTypeDef USART_InitStruct;
 
@@ -282,15 +282,15 @@ static void vUsartHal_UART_Init(void)
 	* @param    空
 	* @return   
 */
-static inline void vUsartHal_DMA_SetTxBuffer( uint32_t MemoryAddress ,uint16_t TxMaxLen)
+static inline void serial_dma_send( uint32_t memory_addr ,uint16_t buf_len)
 {
 //	LL_DMA_DisableIT_TC(UsartDMAx,UsartDmaTxStream);
 	LL_DMA_DisableStream(UsartDMAx,UsartDmaTxStream);//发送暂不使能
 	
 	UsartDmaTxClearFlag();
 	
-	LL_DMA_SetMemoryAddress(UsartDMAx,UsartDmaTxStream,MemoryAddress);
-	LL_DMA_SetDataLength(UsartDMAx,UsartDmaTxStream,TxMaxLen);
+	LL_DMA_SetMemoryAddress(UsartDMAx,UsartDmaTxStream,memory_addr);
+	LL_DMA_SetDataLength(UsartDMAx,UsartDmaTxStream,buf_len);
 
 	LL_DMA_EnableStream(UsartDMAx,UsartDmaTxStream);
 //	LL_DMA_EnableIT_TC(UsartDMAx,UsartDmaTxStream);
@@ -303,15 +303,15 @@ static inline void vUsartHal_DMA_SetTxBuffer( uint32_t MemoryAddress ,uint16_t T
 	* @param    空
 	* @return   
 */
-static inline void vUsartHal_DMA_SetRxBuffer( uint32_t MemoryAddress ,uint16_t RxMaxLen)
+static inline void serial_dma_recv( uint32_t memory_addr ,uint16_t dma_max_len)
 {
 	LL_DMA_DisableIT_TC(UsartDMAx,UsartDmaRxStream);
 	LL_DMA_DisableStream(UsartDMAx,UsartDmaRxStream);//发送暂不使能
 	
 	UsartDmaRxClearFlag();
 	
-	LL_DMA_SetMemoryAddress(UsartDMAx,UsartDmaRxStream,MemoryAddress);
-	LL_DMA_SetDataLength(UsartDMAx,UsartDmaRxStream,RxMaxLen);
+	LL_DMA_SetMemoryAddress(UsartDMAx,UsartDmaRxStream,memory_addr);
+	LL_DMA_SetDataLength(UsartDMAx,UsartDmaRxStream,dma_max_len);
 
 	LL_DMA_EnableStream(UsartDMAx,UsartDmaRxStream);
 	LL_DMA_EnableIT_TC(UsartDMAx,UsartDmaRxStream);
@@ -323,36 +323,36 @@ static inline void vUsartHal_DMA_SetRxBuffer( uint32_t MemoryAddress ,uint16_t R
   * @param    空
   * @retval   空
   */
-static inline void vUsartHal_SendThisPacket(void)
+static inline void serial_send_pkt(void)
 {
-	uint16_t PktSize ;
-	uint16_t Head ;
-	PktSize = stUartTx.PktSize ;
-	stUartTx.PktSize = 0;
-	Head = stUartTx.Tail - PktSize  ;
-	vUsartHal_DMA_SetTxBuffer((uint32_t)(&stUartTx.buf[Head]),PktSize);
+	uint16_t pkt_size = serial_tx.pktsize ;
+	uint16_t pkt_head  = serial_tx.pkttail - pkt_size ;
+	
+	serial_tx.pktsize = 0;
+	
+	serial_dma_send((uint32_t)(&serial_tx.buf[pkt_head]),pkt_size);
 }
 
 
 
 /**
-  * @brief    vUsartHal_RxPktMaxLen 设置硬件接收最大包
+  * @brief    serial_rxpkt_max_len 设置硬件接收最大包
   * @param    空
   * @retval   空
   */
-void vUsartHal_RxPktMaxLen(uint16_t MaxLen)
+void serial_rxpkt_max_len(uint16_t pktmax)
 {
-	stUartRx.MaxLen = MaxLen;
-	stUartRx.Tail = 0;
+	serial_rx.pktmax = pktmax;
+	serial_rx.pkttail = 0;
 	
-	stUartRxQueue.Tail = 0;
-	stUartRxQueue.Head = 0;
-		
-	vUsartHal_DMA_SetRxBuffer((uint32_t)(&stUartRx.buf[0]),MaxLen);
+	serial_rxpkt_queue.tail = 0;
+	serial_rxpkt_queue.head = 0;
+
+	serial_dma_recv((uint32_t)(&serial_rx.buf[0]),pktmax);
 }
 
 
-int iUsartHal_TxBusy(void)
+int serial_busy(void)
 {
 	return (LL_DMA_IsEnabledStream(UsartDMAx,UsartDmaTxStream));
 }
@@ -360,30 +360,30 @@ int iUsartHal_TxBusy(void)
 
 
 /**
-	* @brief    vUsartHal_RxPktIn console 串口接收数据包队列入列
+	* @brief    hal_usart_recv_pkt console 串口接收数据包队列入列
 	* @param    
 	* @return   空
 */
-static inline void vUsartHal_RxPktIn(char * pkt ,uint16_t len)
+static inline void serial_pkt_queue_in(char * pkt ,uint16_t len)
 {
-	stUartRxQueue.Tail = (stUartRxQueue.Tail + 1) % HAL_RX_PACKET_SIZE;
-	stUartRxQueue.Pkt[stUartRxQueue.Tail] = pkt;
-	stUartRxQueue.PktLen[stUartRxQueue.Tail] = len;
+	serial_rxpkt_queue.tail = (serial_rxpkt_queue.tail + 1) % HAL_RX_PACKET_SIZE;
+	serial_rxpkt_queue.pktbuf[serial_rxpkt_queue.tail] = pkt;
+	serial_rxpkt_queue.pktlen[serial_rxpkt_queue.tail] = len;
 }
 
 
 /**
-	* @brief    iUsartHal_RxPktOut console 串口队列出队
+	* @brief    hal_usart_send_pkt console 串口队列出队
 	* @param    
 	* @return   空
 */
-int iUsartHal_RxPktOut(char ** data,uint16_t * len)
+int serial_pkt_queue_out(char ** data,uint16_t * len)
 {
-	if (stUartRxQueue.Tail != stUartRxQueue.Head)
+	if (serial_rxpkt_queue.tail != serial_rxpkt_queue.head)
 	{
-		stUartRxQueue.Head = (stUartRxQueue.Head + 1) % HAL_RX_PACKET_SIZE;
-		*data = stUartRxQueue.Pkt[stUartRxQueue.Head];
-		*len  = stUartRxQueue.PktLen[stUartRxQueue.Head];
+		serial_rxpkt_queue.head = (serial_rxpkt_queue.head + 1) % HAL_RX_PACKET_SIZE;
+		*data = serial_rxpkt_queue.pktbuf[serial_rxpkt_queue.head];
+		*len  = serial_rxpkt_queue.pktlen[serial_rxpkt_queue.head];
 		return 1;
 	}
 	else
@@ -396,29 +396,29 @@ int iUsartHal_RxPktOut(char ** data,uint16_t * len)
 
 
 /**
-	* @brief    vUsartHal_Output console 硬件层输出
+	* @brief    hal_usart_puts console 硬件层输出
 	* @param    空
 	* @return   空
 */
-void vUsartHal_Output(char * buf,uint16_t len)
+void serial_puts(char * buf,uint16_t len)
 {
 	while(len)
 	{
-		uint16_t remain  = HAL_TX_BUF_SIZE - stUartTx.Tail - 1;
-		uint16_t PktSize = (remain > len) ? len : remain;
-		uint16_t Tail = stUartTx.Tail;              //先获取当前尾部地址
+		uint16_t pkttail = serial_tx.pkttail;              //先获取当前尾部地址
+		uint16_t remain  = HAL_TX_BUF_SIZE - serial_tx.pkttail - 1;
+		uint16_t pktsize = (remain > len) ? len : remain;
 		
-		memcpy(&stUartTx.buf[Tail] , buf , PktSize);//把数据包拷到缓存区中
-		Tail += PktSize;
-		buf  += PktSize;
-		len  -= PktSize; 
+		memcpy(&serial_tx.buf[pkttail] , buf , pktsize);//把数据包拷到缓存区中
+		pkttail += pktsize;
+		buf  += pktsize;
+		len  -= pktsize; 
 		
-		stUartTx.Tail = Tail;       //更新尾部
-		stUartTx.PktSize += PktSize;//设置当前包大小
+		serial_tx.pkttail = pkttail;       //更新尾部
+		serial_tx.pktsize += pktsize;//设置当前包大小
 		
 		//开始发送
 		if (!LL_DMA_IsEnabledStream(UsartDMAx,UsartDmaTxStream))
-			vUsartHal_SendThisPacket();
+			serial_send_pkt();
 		
 		if (len) 
 			while(LL_DMA_IsEnabledStream(UsartDMAx,UsartDmaTxStream)) ;//未发送完等待
@@ -431,11 +431,11 @@ void vUsartHal_Output(char * buf,uint16_t len)
 
 
 /**
-	* @brief    iUsartHal_IAP_Erase console 擦除 flash 某个扇区
+	* @brief    iap_erase_flash console 擦除 flash 某个扇区
 	* @param    空
 	* @return   空
 */
-int iUsartHal_IAP_Erase(uint32_t SECTOR)
+int iap_erase_flash(uint32_t SECTOR)
 {
 	uint32_t SectorError;
     FLASH_EraseInitTypeDef FlashEraseInit;
@@ -458,7 +458,7 @@ int iUsartHal_IAP_Erase(uint32_t SECTOR)
 	* @param    空
 	* @return   空
 */
-void vUsartHal_IAP_Write(uint32_t FlashAddr,uint32_t FlashData)
+void iap_write_flash(uint32_t FlashAddr,uint32_t FlashData)
 {
 	HAL_FLASH_Program(FLASH_TYPEPROGRAM_WORD,FlashAddr,FlashData);
 }
@@ -466,11 +466,11 @@ void vUsartHal_IAP_Write(uint32_t FlashAddr,uint32_t FlashData)
 
 
 /**
-	* @brief    vUsartHal_LockFlash console 上锁 flash
+	* @brief    iap_lock_flash console 上锁 flash
 	* @param    空
 	* @return   空
 */
-void vUsartHal_LockFlash(void)
+void iap_lock_flash(void)
 {
 	HAL_FLASH_Lock();
 }
@@ -478,11 +478,11 @@ void vUsartHal_LockFlash(void)
 
 
 /**
-	* @brief    vUsartHal_UnlockFlash console 解锁 flash
+	* @brief    iap_unlock_flash console 解锁 flash
 	* @param    空
 	* @return   空
 */
-void vUsartHal_UnlockFlash(void)
+void iap_unlock_flash(void)
 {
 	HAL_FLASH_Unlock();
 }
@@ -494,7 +494,7 @@ void vUsartHal_UnlockFlash(void)
 	* @param    空
 	* @return  
 */
-void vShell_RebootSystem(void * arg)
+void shell_reboot_command(void * arg)
 {
 	NVIC_SystemReset();
 }
@@ -506,7 +506,7 @@ void vShell_RebootSystem(void * arg)
 	* @param    空
 	* @return   空
 */
-void vShell_JumpCmd(void * arg)
+void shell_jump_command(void * arg)
 {
 	uint32_t UPDATE_ADDR = (SCB->VTOR == FLASH_BASE) ? (APP_ADDR):(IAP_ADDR);
 	uint32_t SpInitVal = *(uint32_t *)(UPDATE_ADDR);    
@@ -535,41 +535,41 @@ extern ros_semaphore_t rosSerialRxSem;
 #endif
 
 /**
-	* @brief    UsartDmaTxIRQFunc console 串口发送一包数据完成中断
+	* @brief    USART_DMA_TX_IRQ console 串口发送一包数据完成中断
 	* @param    空
 	* @return   空
 */
-void UsartDmaTxIRQFunc(void) 
+void USART_DMA_TX_IRQ(void) 
 {
-	if (stUartTx.PktSize == 0) //发送完此包后无数据，复位缓冲区
+	if (serial_tx.pktsize == 0) //发送完此包后无数据，复位缓冲区
 	{
-		stUartTx.Tail = 0;
+		serial_tx.pkttail = 0;
 		LL_DMA_DisableStream(UsartDMAx,UsartDmaTxStream);
 		UsartDmaTxClearFlag();
 	}
 	else
 	{
-		vUsartHal_SendThisPacket(); //还有数据则继续发送
+		serial_send_pkt(); //还有数据则继续发送
 	}
 }
 
 
 /**
-	* @brief    UsartDmaRxIRQFunc console 串口接收满中断
+	* @brief    USART_DMA_RX_IRQ console 串口接收满中断
 	* @param    空
 	* @return   空
 */
-void UsartDmaRxIRQFunc(void) 
+void USART_DMA_RX_IRQ(void) 
 {
-	vUsartHal_RxPktIn(&(stUartRx.buf[stUartRx.Tail]),stUartRx.MaxLen); //把当前包地址和大小送入缓冲队列
+	serial_pkt_queue_in(&(serial_rx.buf[serial_rx.pkttail]),serial_rx.pktmax); //把当前包地址和大小送入缓冲队列
 	
-	stUartRx.Tail += stUartRx.MaxLen ; //更新缓冲地址
+	serial_rx.pkttail += serial_rx.pktmax ; //更新缓冲地址
 	
-	if (stUartRx.Tail + stUartRx.MaxLen > HAL_RX_BUF_SIZE) //如果剩余空间不足以缓存最大包长度，从 0 开始
-		stUartRx.Tail = 0;
+	if (serial_rx.pkttail + serial_rx.pktmax > HAL_RX_BUF_SIZE) //如果剩余空间不足以缓存最大包长度，从 0 开始
+		serial_rx.pkttail = 0;
 	
 	UsartDmaRxClearFlag();
-	vUsartHal_DMA_SetRxBuffer((uint32_t)&(stUartRx.buf[stUartRx.Tail]),stUartRx.MaxLen);//设置缓冲地址和最大包长度
+	serial_dma_recv((uint32_t)&(serial_rx.buf[serial_rx.pkttail]),serial_rx.pktmax);//设置缓冲地址和最大包长度
 
 	#ifdef _CMSIS_OS_H	
 		osSemaphoreRelease(osSerialRxSemHandle);// 释放信号量
@@ -581,27 +581,27 @@ void UsartDmaRxIRQFunc(void)
 
 
 /**
-	* @brief    UsartIRQnFunc 串口中断函数，只有空闲中断
+	* @brief    USART_IRQ 串口中断函数，只有空闲中断
 	* @param    空
 	* @return   空
 */
-void UsartIRQnFunc(void) 
+void USART_IRQ(void) 
 {
-	uint16_t PktLen ;
+	uint16_t pkt_len ;
 	
 	LL_USART_ClearFlag_IDLE(USARTx); //清除空闲中断
 	
-	PktLen = stUartRx.MaxLen - LL_DMA_GetDataLength(UsartDMAx,UsartDmaRxStream);//得到当前包的长度
+	pkt_len = serial_rx.pktmax - LL_DMA_GetDataLength(UsartDMAx,UsartDmaRxStream);//得到当前包的长度
 	
-	if (PktLen)
+	if (pkt_len)
 	{
-		vUsartHal_RxPktIn(&(stUartRx.buf[stUartRx.Tail]),PktLen); //把当前包送入缓冲队列，交由应用层处理
+		serial_pkt_queue_in(&(serial_rx.buf[serial_rx.pkttail]),pkt_len); //把当前包送入缓冲队列，交由应用层处理
 	
-		stUartRx.Tail += PktLen ;	 //更新缓冲地址
-		if (stUartRx.Tail + stUartRx.MaxLen > HAL_RX_BUF_SIZE)//如果剩余空间不足以缓存最大包长度，从 0 开始
-			stUartRx.Tail = 0;
+		serial_rx.pkttail += pkt_len ;	 //更新缓冲地址
+		if (serial_rx.pkttail + serial_rx.pktmax > HAL_RX_BUF_SIZE)//如果剩余空间不足以缓存最大包长度，从 0 开始
+			serial_rx.pkttail = 0;
 
-		vUsartHal_DMA_SetRxBuffer((uint32_t)&(stUartRx.buf[stUartRx.Tail]),stUartRx.MaxLen);//设置缓冲地址和最大包长度
+		serial_dma_recv((uint32_t)&(serial_rx.buf[serial_rx.pkttail]),serial_rx.pktmax);//设置缓冲地址和最大包长度
 
 		#ifdef _CMSIS_OS_H
 			osSemaphoreRelease(osSerialRxSemHandle);// 释放信号量	
@@ -614,30 +614,30 @@ void UsartIRQnFunc(void)
 
 //------------------------------华丽的分割线------------------------------
 /**
-	* @brief    vUsartHal_Init console 硬件层初始化
+	* @brief    hal_serial_init console 硬件层初始化
 	* @param    空
 	* @return   空
 */
-void vUsartHal_Init(void)
+void hal_serial_init(void)
 {
 	//引脚初始化
 	#if   (xUSART == 1) 
-		vUsartHal_USART1_GPIO_Init();
+		usart1_gpio_init();
 	#elif (xUSART == 3) 
 		vUsartHal_USART3_GPIO_Init();	
 	#endif
 
-	vUsartHal_UART_Init();
-	vUsartHal_DMA_Init();
+	usart_base_init();
+	usart_dma_init();
 	
-	stUartTx.Tail = 0;
-	stUartTx.PktSize = 0;
+	serial_tx.pkttail = 0;
+	serial_tx.pktsize = 0;
 	
-	vUsartHal_RxPktMaxLen(COMMANDLINE_MAX_LEN);
+	serial_rxpkt_max_len(COMMANDLINE_MAX_LEN);
 }
 
 
-void vUsartHal_Deinit(void)
+void hal_serial_deinit(void)
 {
 	NVIC_DisableIRQ(UsartDmaTxIRQn);
 	NVIC_DisableIRQ(UsartDmaRxIRQn);

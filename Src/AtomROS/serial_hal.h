@@ -30,28 +30,30 @@
 
 
 
-void vUsartHal_Output(char * buf,uint16_t len);
+void serial_puts(char * buf,uint16_t len);
 
-int  iUsartHal_RxPktOut(char ** data,uint16_t * len);
+int  serial_pkt_queue_out(char ** data,uint16_t * len);
 
-void vUsartHal_RxPktMaxLen(uint16_t MaxLen);
+void serial_rxpkt_max_len(uint16_t MaxLen);
 
-int  iUsartHal_TxBusy(void);
+int  serial_busy(void);
 
-void vUsartHal_Init(void);
+void hal_serial_init(void);
 
-void vUsartHal_Deinit(void);
+void hal_serial_deinit(void);
+
 //------------------------------串口 IAP 相关------------------------------
-int  iUsartHal_IAP_Erase(uint32_t SECTOR);	 
+int  iap_erase_flash(uint32_t SECTOR);	 
 	 
-void vUsartHal_IAP_Write(uint32_t FlashAddr,uint32_t FlashData);
+void iap_write_flash(uint32_t FlashAddr,uint32_t FlashData);
 
-void vUsartHal_UnlockFlash(void);
+void iap_unlock_flash(void);
 
-void vUsartHal_LockFlash(void);
+void iap_lock_flash(void);
+
 //------------------------------控制台命令------------------------------
-void vShell_JumpCmd(void * arg);
-void vShell_RebootSystem(void * arg);
+void shell_jump_command(void * arg);
+void shell_reboot_command(void * arg);
 
 	 
 #ifdef __cplusplus

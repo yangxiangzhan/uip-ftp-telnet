@@ -28,7 +28,7 @@
 
 #define UASRT_IAP_BUF_SIZE  1024
 
-const static char acIAPtip[]=
+const static char iap_logo[]=
 "\r\n\
  ____   ___   ____\r\n\
 |_  _| / _ \\ |  _ \\\r\n\
@@ -39,10 +39,10 @@ const static char acIAPtip[]=
 
 static struct st_console_iap
 {
-	uint32_t iFlashAddr;
-	uint32_t iTimeOut;
+	uint32_t flashaddr;
+	uint32_t timestamp;
 }
-stUsartIAP;
+serial_iap;
 
 ros_task_t stSerialConsoleTask;
 ros_task_t stUsartIapTask;
@@ -51,7 +51,7 @@ ros_semaphore_t rosSerialRxSem;
 
 
 
-struct shell_buf stUsartShellBuf;
+static struct shell_buf serial_shellbuf;
 //------------------------------相关函数声明------------------------------
 
 
@@ -72,15 +72,15 @@ int task_UsartIapCompletePro(void * arg)
 	
 	printk("loading");
 	
-	task_cond_wait(OS_current_time - stUsartIAP.iTimeOut > 2000) ;//超时 2.5 s
+	task_cond_wait(OS_current_time - serial_iap.timestamp > 2000) ;//超时 2.5 s
 	
 	task_cancel(&stUsartIapTask); // 删除 iap 任务
 	
-	vUsartHal_LockFlash();   //由于要写完最后一包数据才能上锁，所以上锁放在 task_UsartIapCompletePro 中
+	iap_lock_flash();   //由于要写完最后一包数据才能上锁，所以上锁放在 task_UsartIapCompletePro 中
 	
-	vUsartHal_RxPktMaxLen(COMMANDLINE_MAX_LEN);
+	serial_rxpkt_max_len(COMMANDLINE_MAX_LEN);
 	
-	uint32_t filesize = (SCB->VTOR == FLASH_BASE) ? (stUsartIAP.iFlashAddr-APP_ADDR):(stUsartIAP.iFlashAddr-IAP_ADDR);
+	uint32_t filesize = (SCB->VTOR == FLASH_BASE) ? (serial_iap.flashaddr-APP_ADDR):(serial_iap.flashaddr-IAP_ADDR);
 	printk("\r\nupdate completed!\r\nupdate package size:%d byte\r\n",filesize);
 
 	TASK_END();
@@ -97,16 +97,16 @@ int task_UsartIapPro(void * arg)
 	uint16_t pktsize;
 	char   * pktdata;
 
-	uint32_t * piData;
+	uint32_t * value;
 	
 	TASK_BEGIN();//任务开始
 	
-	vUsartHal_UnlockFlash();//由于要写完最后一包数据才能上锁，所以上锁放在 task_UsartIapCompletePro 中
+	iap_unlock_flash();//由于要写完最后一包数据才能上锁，所以上锁放在 task_UsartIapCompletePro 中
 	
 	if (SCB->VTOR == FLASH_BASE)//如果是 iap 模式，擦除 app 区域
 	{
-		stUsartIAP.iFlashAddr = APP_ADDR;
-		if(iUsartHal_IAP_Erase(5)) //app 地址在 0x8020000,删除扇区5数据
+		serial_iap.flashaddr = APP_ADDR;
+		if(iap_erase_flash(5)) //app 地址在 0x8020000,删除扇区5数据
 		{
 			Error_Here();//发生错误了	
 			task_exit();
@@ -114,45 +114,45 @@ int task_UsartIapPro(void * arg)
 	}	
  	else
  	{
-		stUsartIAP.iFlashAddr = IAP_ADDR;
-		if(iUsartHal_IAP_Erase(0)) //iap 地址在 0x8000000,删除扇区0数据
+		serial_iap.flashaddr = IAP_ADDR;
+		if(iap_erase_flash(0)) //iap 地址在 0x8000000,删除扇区0数据
 		{
 			Error_Here();//发生错误了	
 			task_exit();
 		}
 		
-		if(iUsartHal_IAP_Erase(1)) //扇区1数据
+		if(iap_erase_flash(1)) //扇区1数据
 		{
 			Error_Here();//发生错误了	
 			task_exit();
 		}
 	
-		if(iUsartHal_IAP_Erase(2)) //扇区2数据
+		if(iap_erase_flash(2)) //扇区2数据
 		{
 			Error_Here();//发生错误了	
 			task_exit();
 		}	
  	}
 	
-	color_printk(light_green,"\033[2J\033[%d;%dH%s",0,0,acIAPtip);//清屏
+	color_printk(light_green,"\033[2J\033[%d;%dH%s",0,0,iap_logo);//清屏
 	
 	while(1)
 	{
 		//task_cond_wait(iUsartHal_RxPktOut(&pktdata,&pktsize));
 		task_semaphore_wait(&rosSerialRxSem);//等待接收到一包数据
 		
-		while (iUsartHal_RxPktOut(&pktdata,&pktsize))
+		while (serial_pkt_queue_out(&pktdata,&pktsize))
 		{
-			piData = (uint32_t*)pktdata;
+			value = (uint32_t*)pktdata;
 			
-			for (uint32_t iCnt = 0;iCnt < pktsize ; iCnt += 4) // f4 可以以 word 写入
+			for (uint32_t i = 0;i < pktsize ; i += 4) // f4 可以以 word 写入
 			{
-				vUsartHal_IAP_Write(stUsartIAP.iFlashAddr,*piData);
-				stUsartIAP.iFlashAddr += 4;
-				++piData;
+				iap_write_flash(serial_iap.flashaddr,*value);
+				serial_iap.flashaddr += 4;
+				++value;
 			}
 			
-			stUsartIAP.iTimeOut = OS_current_time;//更新时间戳
+			serial_iap.timestamp = OS_current_time;//更新时间戳
 			
 			if (task_is_exited(&stUsartIapTimeoutTask))
 				task_create(&stUsartIapTimeoutTask,NULL,task_UsartIapCompletePro,NULL);
@@ -174,8 +174,8 @@ int task_UsartIapPro(void * arg)
 */
 int task_SerialConsole(void * arg)
 {
-	uint16_t ucLen ;
-	char * HalPkt;
+	char  *  packet;
+	uint16_t pktlen ;
 
 	TASK_BEGIN();//任务开始
 
@@ -184,10 +184,10 @@ int task_SerialConsole(void * arg)
 	while(1)
 	{
 		task_semaphore_wait(&rosSerialRxSem);
-		//task_cond_wait(iUsartHal_RxPktOut(&HalPkt,&ucLen));
+		//task_cond_wait(iUsartHal_RxPktOut(&packet,&pktlen));
 
-		while (iUsartHal_RxPktOut(&HalPkt,&ucLen))
-			shell_input(&stUsartShellBuf,HalPkt,ucLen);//数据帧传入应用层
+		while (serial_pkt_queue_out(&packet,&pktlen))
+			shell_input(&serial_shellbuf,packet,pktlen);//数据帧传入应用层
 		
 		task_join(&stUsartIapTask); //在线升级时数据流往 iap 任务走
 	}
@@ -199,43 +199,43 @@ int task_SerialConsole(void * arg)
 
 
 /** 
-	* @brief vShell_UpdateCmd  iap 升级命令
+	* @brief shell_iap_command  iap 升级命令
 	* @param void
 	* @return NULL
 */
-void vShell_UpdateCmd(void * arg)
+void shell_iap_command(void * arg)
 {
 	task_create(&stUsartIapTask,NULL,task_UsartIapPro,NULL);
-	vUsartHal_RxPktMaxLen(UASRT_IAP_BUF_SIZE);
+	serial_rxpkt_max_len(UASRT_IAP_BUF_SIZE);
 }
 
 
 
 
 
-void vSerialConsole_Init(char * info)
+void serial_console_init(char * info)
 {
-	vUsartHal_Init(); //先初始化硬件层
+	hal_serial_init(); //先初始化硬件层
 	
-	SHELL_MALLOC(&stUsartShellBuf,vUsartHal_Output);
+	SHELL_MALLOC(&serial_shellbuf,serial_puts);
 
 	if (SCB->VTOR != FLASH_BASE)
 	{
-		shell_register_command("update-iap",vShell_UpdateCmd);	
+		shell_register_command("update-iap",shell_iap_command);	
 	}
 	else
 	{
-		shell_register_command("update-app",vShell_UpdateCmd);	
-		shell_register_command("jump-app",vShell_JumpCmd);
+		shell_register_command("update-app",shell_iap_command);	
+		shell_register_command("jump-app",shell_jump_command);
 	}
 
-	shell_register_command("reboot"  ,vShell_RebootSystem);
+	shell_register_command("reboot"  ,shell_reboot_command);
 	
 	task_create(&stSerialConsoleTask,NULL,task_SerialConsole,NULL);
 	
 	color_printk(purple,"%s",info);//打印开机信息或者控制台信息
 	
-	while(iUsartHal_TxBusy()); //等待打印结束
+	while(serial_busy()); //等待打印结束
 }
 
 

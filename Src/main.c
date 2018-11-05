@@ -83,7 +83,7 @@ struct timer periodic_timer,arp_timer;
 
 
 // ¿ØÖÆÌ¨Í¼±ê
-const static char acSTM32LOGO[]=
+const static char stm32_logo[]=
 "\r\n\
 	 ____  _____  __  __  ____  ____\r\n\
 	/ ___||__ __||  \\/  ||___ \\|___ \\COPYRIGHT(c):\r\n\
@@ -196,7 +196,7 @@ void uip_base_poll(void)
 	}
 }
 
-ros_task_t stLEDtask;
+ros_task_t led_rostask;
 
 int task_LED(void *arg)
 {
@@ -207,9 +207,9 @@ int task_LED(void *arg)
 	
 	while(1)
 	{
-		task_sleep(1250);
+		task_sleep(1350);
 		vLED1_Loop();
-		printk("1250ms print test\r\n");
+		printk("1350ms print test\r\n");
 	}
 	
 	TASK_END();
@@ -255,15 +255,15 @@ int main(void)
   MX_SDIO_SD_Init();
   MX_FATFS_Init();
   /* USER CODE BEGIN 2 */
-	shell_init("uIP >",vUsartHal_Output);
-	vSerialConsole_Init((char *)acSTM32LOGO);
+	shell_init("uIP >",serial_puts);
+	serial_console_init((char *)stm32_logo);
 	
 	uip_base_init();
 	uip_app_init();
+
 	
 	ioctrl(LED2,1);
-	
-	task_create(&stLEDtask,NULL,task_LED,NULL);
+	task_create(&led_rostask,NULL,task_LED,NULL);
 
   /* USER CODE END 2 */
 

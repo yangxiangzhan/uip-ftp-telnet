@@ -60,7 +60,7 @@ typedef void (*cmd_fn_def)(void * arg);
 typedef struct shell_cmd
 {
 	uint32_t	  ID;	 //命令标识码
-	char *		  pName; //记录每条命令字符串的内存地址
+	char *		  name; //记录每条命令字符串的内存地址
 	cmd_fn_def	  Func;  //记录命令函数指针
 	//struct rb_node cmd_node;//红黑树节点
 	struct avl_node cmd_node;//avl树节点
