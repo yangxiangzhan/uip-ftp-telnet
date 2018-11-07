@@ -281,7 +281,7 @@ static void usart_base_init(void)
 	* @brief    设置 console 硬件发送缓存区，同时会清除接收标志位
 	* @param    空
 	* @return   
-*/
+
 static inline void serial_dma_send( uint32_t memory_addr ,uint16_t buf_len)
 {
 //	LL_DMA_DisableIT_TC(UsartDMAx,UsartDmaTxStream);
@@ -295,7 +295,7 @@ static inline void serial_dma_send( uint32_t memory_addr ,uint16_t buf_len)
 	LL_DMA_EnableStream(UsartDMAx,UsartDmaTxStream);
 //	LL_DMA_EnableIT_TC(UsartDMAx,UsartDmaTxStream);
 }
-
+*/
 
 
 /**
@@ -325,12 +325,21 @@ static inline void serial_dma_recv( uint32_t memory_addr ,uint16_t dma_max_len)
   */
 static inline void serial_send_pkt(void)
 {
-	uint16_t pkt_size = serial_tx.pktsize ;
-	uint16_t pkt_head  = serial_tx.pkttail - pkt_size ;
+	uint32_t pkt_size = serial_tx.pktsize ;
+	uint32_t pkt_head  = serial_tx.pkttail - pkt_size ;
 	
 	serial_tx.pktsize = 0;
 	
-	serial_dma_send((uint32_t)(&serial_tx.buf[pkt_head]),pkt_size);
+//	serial_dma_send((uint32_t)(&serial_tx.buf[pkt_head]),pkt_size);
+	LL_DMA_DisableStream(UsartDMAx,UsartDmaTxStream);//发送暂不使能
+	
+	UsartDmaTxClearFlag();
+	
+	LL_DMA_SetMemoryAddress(UsartDMAx,UsartDmaTxStream,(uint32_t)(&serial_tx.buf[pkt_head]));
+	LL_DMA_SetDataLength(UsartDMAx,UsartDmaTxStream,pkt_size);
+
+	LL_DMA_EnableStream(UsartDMAx,UsartDmaTxStream);
+
 }
 
 
@@ -360,11 +369,11 @@ int serial_busy(void)
 
 
 /**
-	* @brief    hal_usart_recv_pkt console 串口接收数据包队列入列
+	* @brief    serial_rxpkt_queue_in console 串口接收数据包队列入列
 	* @param    
 	* @return   空
 */
-static inline void serial_pkt_queue_in(char * pkt ,uint16_t len)
+static inline void serial_rxpkt_queue_in(char * pkt ,uint16_t len)
 {
 	serial_rxpkt_queue.tail = (serial_rxpkt_queue.tail + 1) % HAL_RX_PACKET_SIZE;
 	serial_rxpkt_queue.pktbuf[serial_rxpkt_queue.tail] = pkt;
@@ -373,11 +382,11 @@ static inline void serial_pkt_queue_in(char * pkt ,uint16_t len)
 
 
 /**
-	* @brief    hal_usart_send_pkt console 串口队列出队
+	* @brief    serial_rxpkt_queue_out console 串口队列出队
 	* @param    
 	* @return   空
 */
-int serial_pkt_queue_out(char ** data,uint16_t * len)
+int serial_rxpkt_queue_out(char ** data,uint16_t * len)
 {
 	if (serial_rxpkt_queue.tail != serial_rxpkt_queue.head)
 	{
@@ -394,7 +403,6 @@ int serial_pkt_queue_out(char ** data,uint16_t * len)
 }
 
 
-
 /**
 	* @brief    hal_usart_puts console 硬件层输出
 	* @param    空
@@ -404,121 +412,26 @@ void serial_puts(char * buf,uint16_t len)
 {
 	while(len)
 	{
-		uint16_t pkttail = serial_tx.pkttail;              //先获取当前尾部地址
-		uint16_t remain  = HAL_TX_BUF_SIZE - serial_tx.pkttail - 1;
-		uint16_t pktsize = (remain > len) ? len : remain;
+		uint32_t pkttail = serial_tx.pkttail;              //先获取当前尾部地址
+		uint32_t remain  = HAL_TX_BUF_SIZE - pkttail - 1;
+		uint32_t pktsize = (remain > len) ? len : remain;
 		
 		memcpy(&serial_tx.buf[pkttail] , buf , pktsize);//把数据包拷到缓存区中
+		
 		pkttail += pktsize;
 		buf  += pktsize;
 		len  -= pktsize; 
 		
-		serial_tx.pkttail = pkttail;       //更新尾部
+		serial_tx.pkttail = pkttail;	   //更新尾部
 		serial_tx.pktsize += pktsize;//设置当前包大小
-		
+
 		//开始发送
 		if (!LL_DMA_IsEnabledStream(UsartDMAx,UsartDmaTxStream))
 			serial_send_pkt();
-		
+
 		if (len) 
 			while(LL_DMA_IsEnabledStream(UsartDMAx,UsartDmaTxStream)) ;//未发送完等待
 	}
-}
-
-
-
-//------------------------------串口 IAP 相关------------------------------
-
-
-/**
-	* @brief    iap_erase_flash console 擦除 flash 某个扇区
-	* @param    空
-	* @return   空
-*/
-int iap_erase_flash(uint32_t SECTOR)
-{
-	uint32_t SectorError;
-    FLASH_EraseInitTypeDef FlashEraseInit;
-	HAL_StatusTypeDef HAL_Status;
-	
-	FlashEraseInit.TypeErase    = FLASH_TYPEERASE_SECTORS;       //擦除类型，扇区擦除 
-	FlashEraseInit.Sector       = SECTOR;                        //扇区
-	FlashEraseInit.NbSectors    = 1;                             //一次只擦除一个扇区
-	FlashEraseInit.VoltageRange = FLASH_VOLTAGE_RANGE_3;      //电压范围，VCC=2.7~3.6V之间!!
-	
-	HAL_Status = HAL_FLASHEx_Erase(&FlashEraseInit,&SectorError);
-	
-	return HAL_Status;
-}
-
-
-
-/**
-	* @brief    vUsartHal_IAP_Write console 写 flash
-	* @param    空
-	* @return   空
-*/
-void iap_write_flash(uint32_t FlashAddr,uint32_t FlashData)
-{
-	HAL_FLASH_Program(FLASH_TYPEPROGRAM_WORD,FlashAddr,FlashData);
-}
-
-
-
-/**
-	* @brief    iap_lock_flash console 上锁 flash
-	* @param    空
-	* @return   空
-*/
-void iap_lock_flash(void)
-{
-	HAL_FLASH_Lock();
-}
-
-
-
-/**
-	* @brief    iap_unlock_flash console 解锁 flash
-	* @param    空
-	* @return   空
-*/
-void iap_unlock_flash(void)
-{
-	HAL_FLASH_Unlock();
-}
-
-
-
-/**
-	* @brief    vSystemReboot 硬件重启
-	* @param    空
-	* @return  
-*/
-void shell_reboot_command(void * arg)
-{
-	NVIC_SystemReset();
-}
-
-
-
-/**
-	* @brief    vShell_JumpToAppCmd console 串口发送一包数据完成中断
-	* @param    空
-	* @return   空
-*/
-void shell_jump_command(void * arg)
-{
-	uint32_t UPDATE_ADDR = (SCB->VTOR == FLASH_BASE) ? (APP_ADDR):(IAP_ADDR);
-	uint32_t SpInitVal = *(uint32_t *)(UPDATE_ADDR);    
-	uint32_t JumpAddr = *(uint32_t *)(UPDATE_ADDR + 4); 
-	void (*pAppFun)(void) = (void (*)(void))JumpAddr;    
-	__set_BASEPRI(0); 	      
-	__set_FAULTMASK(0);       
-	__disable_irq();          
-	__set_MSP(SpInitVal);     
-	__set_PSP(SpInitVal);     
-	__set_CONTROL(0);         
-	(*pAppFun) ();            
 }
 
 
@@ -527,11 +440,10 @@ void shell_jump_command(void * arg)
 //#include "cmsis_os.h"//用了freertos 打开
 
 #ifdef _CMSIS_OS_H
-extern osSemaphoreId osSerialRxSemHandle;
-
+	extern osSemaphoreId osSerialRxSemHandle;
 #else
-#include "AtomRos.h"
-extern ros_semaphore_t rosSerialRxSem;
+	#include "AtomRos.h"
+	extern ros_semaphore_t rosSerialRxSem;
 #endif
 
 /**
@@ -561,7 +473,7 @@ void USART_DMA_TX_IRQ(void)
 */
 void USART_DMA_RX_IRQ(void) 
 {
-	serial_pkt_queue_in(&(serial_rx.buf[serial_rx.pkttail]),serial_rx.pktmax); //把当前包地址和大小送入缓冲队列
+	serial_rxpkt_queue_in(&(serial_rx.buf[serial_rx.pkttail]),serial_rx.pktmax); //把当前包地址和大小送入缓冲队列
 	
 	serial_rx.pkttail += serial_rx.pktmax ; //更新缓冲地址
 	
@@ -595,7 +507,7 @@ void USART_IRQ(void)
 	
 	if (pkt_len)
 	{
-		serial_pkt_queue_in(&(serial_rx.buf[serial_rx.pkttail]),pkt_len); //把当前包送入缓冲队列，交由应用层处理
+		serial_rxpkt_queue_in(&(serial_rx.buf[serial_rx.pkttail]),pkt_len); //把当前包送入缓冲队列，交由应用层处理
 	
 		serial_rx.pkttail += pkt_len ;	 //更新缓冲地址
 		if (serial_rx.pkttail + serial_rx.pktmax > HAL_RX_BUF_SIZE)//如果剩余空间不足以缓存最大包长度，从 0 开始

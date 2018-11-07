@@ -16,6 +16,7 @@
 #include <stdint.h> //定义了很多数据类型
 
 #include "AtomROS.h"
+#include "iap_hal.h"
 
 #include "shell.h"
 #include "serial_hal.h"
@@ -114,24 +115,15 @@ int task_UsartIapPro(void * arg)
 	}	
  	else
  	{
-		serial_iap.flashaddr = IAP_ADDR;
-		if(iap_erase_flash(0)) //iap 地址在 0x8000000,删除扇区0数据
+		serial_iap.flashaddr = IAP_ADDR; //iap 地址在 0x8000000,删除扇区0数据
+		for (uint32_t  sector = 0 ; sector < 3 ; ++sector)
 		{
-			Error_Here();//发生错误了	
-			task_exit();
+			if(iap_erase_flash(sector))
+			{
+				Error_Here();//发生错误了	
+				task_exit();
+			}
 		}
-		
-		if(iap_erase_flash(1)) //扇区1数据
-		{
-			Error_Here();//发生错误了	
-			task_exit();
-		}
-	
-		if(iap_erase_flash(2)) //扇区2数据
-		{
-			Error_Here();//发生错误了	
-			task_exit();
-		}	
  	}
 	
 	color_printk(light_green,"\033[2J\033[%d;%dH%s",0,0,iap_logo);//清屏
@@ -141,7 +133,7 @@ int task_UsartIapPro(void * arg)
 		//task_cond_wait(iUsartHal_RxPktOut(&pktdata,&pktsize));
 		task_semaphore_wait(&rosSerialRxSem);//等待接收到一包数据
 		
-		while (serial_pkt_queue_out(&pktdata,&pktsize))
+		while (serial_rxpkt_queue_out(&pktdata,&pktsize))
 		{
 			value = (uint32_t*)pktdata;
 			
@@ -186,7 +178,7 @@ int task_SerialConsole(void * arg)
 		task_semaphore_wait(&rosSerialRxSem);
 		//task_cond_wait(iUsartHal_RxPktOut(&packet,&pktlen));
 
-		while (serial_pkt_queue_out(&packet,&pktlen))
+		while (serial_rxpkt_queue_out(&packet,&pktlen))
 			shell_input(&serial_shellbuf,packet,pktlen);//数据帧传入应用层
 		
 		task_join(&stUsartIapTask); //在线升级时数据流往 iap 任务走

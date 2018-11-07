@@ -23,8 +23,29 @@
 #define TELNET_BIN_TRAN    1
 #define TELNET_BIN_ERROR   2
 
+#define TELNET_FILE_ADDR 0x8060000
 
-
+/*
+sector 0 : 0x8000000  16K
+sector 1 : 0x8004000  16K
+sector 2 : 0x8008000  16K
+sector 3 : 0x800C000  16K
+sector 4 : 0x8010000  64K
+sector 5 : 0x8020000  128K
+sector 6 : 0x8040000  128K
+sector 7 : 0x8060000  128K
+ |
+sector 11 : 0x80E0000  128K
+sector 12 : 0x8000000  16K
+sector 13 : 0x8004000  16K
+sector 14 : 0x8008000  16K
+sector 15 : 0x800C000  16K
+sector 16 : 0x8010000  64K
+sector 17 : 0x8020000  128K
+sector 18 : 0x8040000  128K
+ |
+sector 23 : 0x80E0000  128K
+*/
 
 /*---------------------------------------------------------------------------*/
 
@@ -247,7 +268,7 @@ TransmitBin:
 				flash_addr += 4;
 				pkt_tail = 0;
 			}
-			sprintf(&telnet_buf[4],"\r\nGet file,size:%d byte\r\n",flash_addr - 0x8060000);
+			sprintf(&telnet_buf[4],"\r\nGet file,size:%d byte\r\n",flash_addr - TELNET_FILE_ADDR);
 			telnet_puts(&telnet_buf[4],strlen(&telnet_buf[4]));
 			HAL_FLASH_Lock();
 			flash_addr = 0;
@@ -262,9 +283,9 @@ TransmitBin:
 	{
 		pkt_tail = 0;
 		pkt_remix = 0;
-		flash_addr = 0x8060000;
+		flash_addr = TELNET_FILE_ADDR;
 		HAL_FLASH_Unlock();     //解锁 flash
-		//iUsartHal_IAP_Erase(6);//一般情况下 0x8060000 已擦除
+		//iUsartHal_IAP_Erase(6);//一般情况下 TELNET_FILE_ADDR 已擦除
 	}
 	
 	copy = srt + pkt_remix;//0xff 0xff  被分包的情况，跳过第一个 ff
