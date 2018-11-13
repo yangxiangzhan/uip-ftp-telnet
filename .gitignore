@@ -1,9 +1,16 @@
+
+#这两个文件夹会在编译后产生，不需要上传git。名字固定。
 /MDK-ARM/DebugConfig
 /MDK-ARM/RTE
 
+#这个文件夹是编译输出的文件路径，不需要上传，名字跟工程名有关，记得修改
 /MDK-ARM/uip-ftp-telnet
+
+
+#这个文件夹是source insight 工程，不需要上传
 /_uip-ftp-telnet.si4project
 
 
+#一些不必要的文件，不需要上传
 *.GoodMorning
 .mxproject

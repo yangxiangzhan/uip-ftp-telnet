@@ -203,13 +203,13 @@ int task_LED(void *arg)
 	TASK_BEGIN();
 	
 	ioctrl(LED1,0);
-	ioctrl(LED2,1);
+	ioctrl(LED2,0);
 	
 	while(1)
 	{
 		task_sleep(1350);
 		vLED1_Loop();
-		printk("1350ms print test\r\n");
+		//printk("1350ms print test\r\n");
 	}
 	
 	TASK_END();

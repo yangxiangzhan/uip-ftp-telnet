@@ -1,14 +1,14 @@
 
-
+#include <string.h>
+#include <stdint.h>
+#include "shell.h"
+#include "uip_arp.h"
+#include "tapdev.h"
 #include "uip.h"
 #include "telnet_server.h"
 #include "ustdio.h"
 
-#include <string.h>
-#include "shell.h"
 #include "gpio.h"
-#include "uip_arp.h"
-#include "tapdev.h"
 
 #include "fatfs.h"
 
@@ -23,38 +23,47 @@
 #define TELNET_BIN_TRAN    1
 #define TELNET_BIN_ERROR   2
 
-#define TELNET_FILE_ADDR 0x8060000
 
+#define TELNET_FILE_ADDR 0x8060000
 /*
-sector 0 : 0x8000000  16K
-sector 1 : 0x8004000  16K
-sector 2 : 0x8008000  16K
-sector 3 : 0x800C000  16K
-sector 4 : 0x8010000  64K
-sector 5 : 0x8020000  128K
-sector 6 : 0x8040000  128K
-sector 7 : 0x8060000  128K
- |
-sector 11 : 0x80E0000  128K
-sector 12 : 0x8000000  16K
-sector 13 : 0x8004000  16K
-sector 14 : 0x8008000  16K
-sector 15 : 0x800C000  16K
-sector 16 : 0x8010000  64K
-sector 17 : 0x8020000  128K
-sector 18 : 0x8040000  128K
- |
-sector 23 : 0x80E0000  128K
+* secureCRT telnet 发送文件大概流程：
+* CRT   : will bin tran ; do bin tran
+* server: do bin tran
+* CRT   : will bin tran 
+* CRT   : <file data>
+* CRT   : won't bin tran ; don't bin tran
+* server: won't bin tran ; don't bin tran
+* CRT   : won't bin tran 
+* server: won't bin tran 
+* CRT   : <string mode>
 */
+	
+
+
 
 /*---------------------------------------------------------------------------*/
 
 
-static struct shell_buf telent_shellbuf;
+static __align(4) char telnet_buf[UIP_TCP_MSS+4] = {0};
+
+
+static struct shell_buf telnet_shell;
 static struct uip_conn * telnet_bind = NULL;
 static uint8_t	 telnet_state = TELNET_NORMAL;
-static __align(4) char telnet_buf[UIP_TCP_MSS+4] = {0};
-static volatile int telnet_buftail = 0;
+static volatile uint16_t telnet_buftail = 0;
+
+
+
+static struct telnetfile
+{
+//	char * const buf;
+	uint16_t skip0xff;
+	uint16_t remain ;
+	uint32_t addr ;
+}
+telnet_file ;//= {.buf = telnet_buf};
+
+
 
 void telnet_puts(char * buf,uint16_t len)
 {
@@ -90,7 +99,7 @@ void erase_telnet_flash(void * arg)
     FLASH_EraseInitTypeDef FlashEraseInit;
 	
 	FlashEraseInit.TypeErase    = FLASH_TYPEERASE_SECTORS; //擦除类型，扇区擦除 
-	FlashEraseInit.Sector       = 7;                       //0x8060000 在 F429 扇区7，擦除
+	FlashEraseInit.Sector       = 7;                       //TELNET_FILE_ADDR 在 F429 扇区7，擦除
 	FlashEraseInit.NbSectors    = 1;                       //一次只擦除一个扇区
 	FlashEraseInit.VoltageRange = FLASH_VOLTAGE_RANGE_3;   //电压范围，VCC=2.7~3.6V之间!!
 	
@@ -104,232 +113,129 @@ void erase_telnet_flash(void * arg)
 
 void telnet_server_init(void)
 {
-	SHELL_MALLOC(&telent_shellbuf ,telnet_puts);	
+	SHELL_MALLOC(&telnet_shell ,telnet_puts);	
 	shell_register_command("telnet-erase",erase_telnet_flash);	
 	uip_listen(HTONS(23));
 }
 
 
-#if 0  //从 telnet 接收文件并生成为 telnet.bin
-
-void telnet_input(uint8_t * srt,uint16_t len)
+/**
+	* @brief    telnet_check_option 
+	*           telnet 连接时需要检测回复客户端的选项配置
+	* @param    arg 任务参数
+	* @return   void
+*/
+void telnet_check_option(char ** telnetbuf , uint16_t * buflen ,uint8_t * telnetstate)
 {
-	static FRESULT cFileState = FR_NO_FILE;
-	static FIL stTelnetFile = {0};		 /* File object */
-	static uint16_t pkt_tail = 0;
-	static uint8_t pkt_remix = 0;
-	
-	uint8_t * copy;
-	uint8_t * pkt_end;
+	uint8_t iac = (uint8_t)((*telnetbuf)[0]);
+	uint8_t opt = (uint8_t)((*telnetbuf)[1]);
+	uint8_t val = (uint8_t)((*telnetbuf)[2]);
 
-	uint32_t iByteWritten;
-
-	if (TELNET_NORMAL != telnet_state) 
-		goto TransmitBin;
-	
-Normal:
-	while(len > 2)
+	if (TELNET_NORMAL == *telnetstate)
 	{
-		uint8_t telnet_opt = srt[1] ;
-		uint8_t telnet_val = srt[2] ;
-		if( *srt == TELNET_IAC && telnet_opt > 250 ) 
+		while(iac == TELNET_IAC && opt > 250 )
 		{
-			srt += 3;
-			len -= 3;
-			
-			if (0 == telnet_val) //只回复二进制命令
+			if (0 == val) //只回复二进制命令
 			{
-				if (TELNET_WILL == telnet_opt)
-					telnet_state = TELNET_BIN_TRAN;
+				if (TELNET_WILL == opt)
+				{
+					*telnetstate = TELNET_BIN_TRAN;
+					telnet_file.addr = TELNET_FILE_ADDR;
+					telnet_file.remain = 0;
+					telnet_file.skip0xff = 0;
+					HAL_FLASH_Unlock();
+				}
 				else
-					telnet_option(telnet_opt, telnet_val);
+					telnet_option(opt, val);
 			}
+			
+			*telnetbuf += 3;
+			*buflen -= 3;
+			iac = (uint8_t)((*telnetbuf)[0]);
+			opt = (uint8_t)((*telnetbuf)[1]);
+			val = (uint8_t)((*telnetbuf)[2]);
 		}
-		else
-			break;
 	}
-
-	if ( len )
-		shell_input(&telent_shellbuf,(char*)srt,len);
-
-	return ;
-	
-TransmitBin:
-	
-	if( srt[0] == TELNET_IAC && 0 == srt[2] && srt[1] > 250) 
+	else
 	{
-		if (FR_OK == cFileState)
+		while(iac == TELNET_IAC && val == 0  && opt > 250 )
 		{
-			if (pkt_tail)
+			if (TELNET_WONT == opt) //只回复二进制命令
 			{
-				cFileState = f_write(&stTelnetFile,(void*)telnet_buf, pkt_tail, &iByteWritten);
-				if ((iByteWritten != pkt_tail) || (cFileState != FR_OK))
-					Errors("telnet write reamain data error\r\n");
-				pkt_tail = 0;
+				iac = (uint8_t)((*telnetbuf)[3]);
+				opt = (uint8_t)((*telnetbuf)[4]);
+				val = (uint8_t)((*telnetbuf)[5]);
+
+				if ( iac == TELNET_IAC  && opt == TELNET_DONT  && val == 0 )
+				{
+					HAL_FLASH_Lock();
+					telnet_option(TELNET_WONT, 0);//退出二进制传输模式
+					telnet_option(TELNET_DONT, 0);//退出二进制传输模式
+					char * msg = & telnet_buf[telnet_buftail];
+					sprintf(msg,"\r\nGet file,size=%d bytes\r\n",telnet_file.addr-TELNET_FILE_ADDR);
+					telnet_buftail += strlen(msg);
+					*telnetbuf += 3;
+					*buflen -= 3;
+					*telnetstate = TELNET_NORMAL;
+				}
+				else
+					return ;
 			}
-			sprintf(&telnet_buf[4],"\r\nGet file,size:%d byte\r\n",f_size(&stTelnetFile));
-			telnet_puts(&telnet_buf[4],strlen(&telnet_buf[4]));
-			f_close(&stTelnetFile);
-			cFileState = FR_NO_FILE;
+			
+			*telnetbuf += 3;
+			*buflen -= 3;
+			iac = (uint8_t)((*telnetbuf)[0]);
+			opt = (uint8_t)((*telnetbuf)[1]);
+			val = (uint8_t)((*telnetbuf)[2]);
 		}
-		telnet_state = TELNET_NORMAL;
-		goto Normal;
 	}
-
-	if (TELNET_BIN_TRAN != telnet_state) return;
-
-	if (cFileState) //(0)//文件未打开
-	{ 
-		pkt_tail = 0;
-		pkt_remix = 0;
-		cFileState = f_open(&stTelnetFile, "telnet.bin", FA_CREATE_ALWAYS | FA_WRITE);
-		if (FR_OK != cFileState)
-			telnet_state = TELNET_BIN_ERROR;
-	}
-	
-	copy = srt+pkt_remix;//0xff 0xff  被分包的情况，跳过第一个 ff
-	pkt_end = srt+len ;
-	pkt_remix = (srt[len-1] == 0xff && srt[len-2] != 0xff);//0xff 0xff  被分包的情况
-
-	for(uint8_t * pcBuf = (uint8_t*)&telnet_buf[pkt_tail];  copy < pkt_end ;++pkt_tail)
-	{
-		*pcBuf++ = *copy++ ;
-		if (*copy == 0xff) ++copy;//如果文件中存在 0xff ，在 SecureCRT 会发两个 0xff ，需要剔除一个
-	}
-	
-	uint16_t remain = pkt_tail & 0x03;//取4的余数
-	pkt_tail -= remain;                //fatfs 以4的整数倍写入，否则容易出错
-	cFileState = f_write(&stTelnetFile,(void*)telnet_buf, pkt_tail, &iByteWritten);
-	if ((cFileState != FR_OK)||(iByteWritten != pkt_tail))
-	{
-		f_close(&stTelnetFile);
-		telnet_state = TELNET_BIN_ERROR;
-		Errors("telnet write file error\r\n");	
-	}
-
-	if (remain) //此次没写完的留到下次写
-		memcpy(telnet_buf,&telnet_buf[pkt_tail],remain);
-	pkt_tail = remain;
-	
-	return ;
 }
 
-#else
 
-static void telnet_input(uint8_t * srt,uint16_t len)
+/**
+	* @brief    telnet_recv_file 
+	*           telnet 接收文件，存于 flash 中
+	* @param    arg 任务参数
+	* @return   void
+*/
+void telnet_recv_file(char * data , uint16_t len)
 {
-	static uint32_t  flash_addr ;
-	static uint32_t* value ;	
-	static uint16_t  pkt_tail = 0;
-	static uint8_t   pkt_remix = 0;
-	uint8_t        * pkt_end;
-	uint8_t        * copy;
-
-	if (TELNET_NORMAL != telnet_state) 
-		goto TransmitBin;
+	uint8_t  * copyfrom = (uint8_t*)data ;//+ telnet_file.skip0xff;//0xff 0xff 被分包的情况，跳过第一个 ff
+	uint8_t	 * copyend = copyfrom + len ;
+	uint8_t  * copyto = (uint8_t*)(&telnet_buf[telnet_file.remain]);
+	uint32_t * value = (uint32_t*)(&telnet_buf[0]);
+	uint32_t   size = 0;
 	
-Normal:
-	while(len > 2)
+	//telnet_file.skip0xff = ((uint8_t)data[len-1] == 0xff && (uint8_t)data[len-2] != 0xff);//0xff 0xff 被分包的情况
+
+	//如果文件中存在 0xff ，在 SecureCRT 会发两个 0xff ，需要剔除一个
+	while(copyfrom < copyend)
 	{
-		uint8_t telnet_opt = srt[1] ;
-		uint8_t telnet_val = srt[2] ;
-		if( *srt == TELNET_IAC && telnet_opt > 250 ) 
+		*copyto++ = *copyfrom++ ;
+		if (*copyfrom == 0xff) 
+			++copyfrom;
+	}
+
+	size = copyto - (uint8_t*)(&telnet_buf[0]);
+	telnet_file.remain = size & 0x03 ;//stm32f429 的 flash 以4的整数倍写入，不足4字节留到下一包写入 
+	size >>= 2; 	                  // 除于 4
+	
+	for(uint32_t i = 0;i < size ; ++i)
+	{
+		if (HAL_OK != HAL_FLASH_Program(FLASH_TYPEPROGRAM_WORD,telnet_file.addr,*value))
 		{
-			srt += 3;
-			len -= 3;
-			
-			if (0 == telnet_val) //只回复二进制命令
-			{
-				if (TELNET_WILL == telnet_opt)
-					telnet_state = TELNET_BIN_TRAN;
-				else
-					telnet_option(telnet_opt, telnet_val);
-			}
-		}
-		else
-			break;
-	}
-
-	if ( len )
-		shell_input(&telent_shellbuf,(char*)srt,len);
-
-	return ;
-	
-TransmitBin:
-	
-	if( srt[0] == TELNET_IAC && 0 == srt[2] && srt[1] > 250) 
-	{
-		telnet_state = TELNET_NORMAL;
-		if (flash_addr)
-		{
-			if (pkt_tail)
-			{
-				HAL_FLASH_Program(FLASH_TYPEPROGRAM_WORD,flash_addr,*value);
-				flash_addr += 4;
-				pkt_tail = 0;
-			}
-			sprintf(&telnet_buf[4],"\r\nGet file,size:%d byte\r\n",flash_addr - TELNET_FILE_ADDR);
-			telnet_puts(&telnet_buf[4],strlen(&telnet_buf[4]));
-			HAL_FLASH_Lock();
-			flash_addr = 0;
-		}
-		goto Normal;
-	}
-
-	if (TELNET_BIN_TRAN != telnet_state) 
-		return;
-
-	if (!flash_addr) //(0)//文件未打开
-	{
-		pkt_tail = 0;
-		pkt_remix = 0;
-		flash_addr = TELNET_FILE_ADDR;
-		HAL_FLASH_Unlock();     //解锁 flash
-		//iUsartHal_IAP_Erase(6);//一般情况下 TELNET_FILE_ADDR 已擦除
-	}
-	
-	copy = srt + pkt_remix;//0xff 0xff  被分包的情况，跳过第一个 ff
-	pkt_end = srt + len ;
-	pkt_remix = (srt[len-1] == 0xff && srt[len-2] != 0xff);//0xff 0xff  被分包的情况
-
-	for(uint8_t * buf = (uint8_t*)&telnet_buf[pkt_tail];  copy < pkt_end ;++pkt_tail)
-	{
-		*buf++ = *copy++ ;
-		if (*copy == 0xff) ++copy;//如果文件中存在 0xff ，在 SecureCRT 会发两个 0xff ，需要剔除一个
-	}
-	
-	//flash 以4的整数倍写入，不足4字节留到下一包写入  
-	uint16_t remain = pkt_tail & 0x03;
-	pkt_tail >>= 2;                   // 除于 4
-	value = (uint32_t*)telnet_buf;
-
-	for(uint32_t i = 0;i < pkt_tail ; ++i,++value)
-	{
-		if (HAL_OK != HAL_FLASH_Program(FLASH_TYPEPROGRAM_WORD,flash_addr,*value))
-		{
-			telnet_state = TELNET_BIN_ERROR;
-			flash_addr = 0;
 			Errors("write data error\r\n");
-			return ;
 		}
 		else
-			flash_addr += 4;
+		{
+			++value;
+			telnet_file.addr += 4;
+		}
 	}
 	
-	if (remain) //此次没写完的留到下次写
-		memcpy(telnet_buf,&telnet_buf[pkt_tail<<2],remain);
-	
-	pkt_tail = remain;
-	
-	return ;
+	if (telnet_file.remain) //此次没写完的留到下次写
+		memcpy(telnet_buf,&telnet_buf[size<<2],telnet_file.remain);
 }
-
-
-#endif
-
-
-
-
 
 
 //extern void hal_usart_puts(char * buf, uint16_t len);
@@ -354,20 +260,32 @@ void telnet_port_call(void)
 	}
   
 
-  if(uip_newdata()) 
-  {
-	  telnet_input((uint8_t*)uip_appdata,uip_datalen());
-	  if ( !telnet_bind )
-	  {
-		  if ( default_puts == telnet_puts )
-			  telnet_bind = uip_conn;
-	  }
-	  else
-	  {
-		  if ( default_puts != telnet_puts )
-			  telnet_bind =  NULL;
-	  }
-  }
+	if(uip_newdata()) 
+	{
+  		char * recvdata = uip_appdata;
+		uint16_t datalen = uip_datalen();
+		
+		telnet_check_option(&recvdata,&datalen,&telnet_state);
+
+		if (datalen)
+		{
+			if (TELNET_NORMAL == telnet_state)
+				shell_input(&telnet_shell,recvdata,datalen);//把数据与 shell 交互
+			else
+				telnet_recv_file(recvdata,datalen);
+		}
+		
+		if ( !telnet_bind )
+		{
+			if ( default_puts == telnet_puts )
+				telnet_bind = uip_conn;
+		}
+		else
+		{
+			if ( default_puts != telnet_puts )
+				telnet_bind =  NULL;
+		}
+	}
 
   if (uip_poll()) vLED2_Loop();
   
@@ -402,6 +320,7 @@ void telnet_server_pro(void)
 		telnet_buftail = 0;
 	}
 }
+
 
 
 
